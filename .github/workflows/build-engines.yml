@@ -1,0 +1,113 @@
+name: build-engines
+
+# Long-running engine-compilation pipeline. Triggered manually or on tags.
+# Each engine × target is a separate job so we can rebuild one in isolation.
+
+on:
+  workflow_dispatch:
+    inputs:
+      engines:
+        description: 'Space-separated engine list (default: all)'
+        required: false
+        default: 'pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex synctex'
+      targets:
+        description: 'Space-separated targets (default: emscripten wasi)'
+        required: false
+        default: 'emscripten wasi'
+  push:
+    tags:
+      - 'engines-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  builder-image:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.bake.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build the toolchain image (cached)
+        id: bake
+        run: |
+          docker buildx build \
+            --cache-from=type=gha \
+            --cache-to=type=gha,mode=max \
+            --tag texlive-wasm-builder:ci \
+            --load \
+            engine/
+          echo "image=texlive-wasm-builder:ci" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: builder-image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex, synctex]
+        target: [emscripten, wasi]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: rebuild toolchain image from cache
+        run: |
+          docker buildx build \
+            --cache-from=type=gha \
+            --tag texlive-wasm-builder:ci \
+            --load \
+            engine/
+
+      - name: ${{ matrix.engine }}-${{ matrix.target }}
+        run: |
+          docker run --rm \
+            -v "$PWD":/workspace -w /workspace/engine \
+            texlive-wasm-builder:ci \
+            make -j$(nproc) ${{ matrix.engine }}-${{ matrix.target }}
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.engine }}-${{ matrix.target }}
+          path: |
+            engine/build/${{ matrix.engine }}/${{ matrix.target }}/*.wasm
+            engine/build/${{ matrix.engine }}/${{ matrix.target }}/*.js
+          retention-days: 7
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: download engine artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: engine-artifacts/
+
+      - name: build manifest (placeholder — needs real TDS tree)
+        run: |
+          mkdir -p dist
+          echo '{"schema":1,"version":"ci-stub","generatedAt":"'"$(date -Iseconds)"'","coreBundleUrl":null,"fullBundleUrl":null,"cdnBaseUrl":null,"files":{}}' \
+            > dist/tex-packages.json
+          ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manifest
+          path: dist/tex-packages.json
+          retention-days: 14

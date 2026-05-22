@@ -1,0 +1,91 @@
+# Paths (TDS-relative) excluded from the npm artifact bundles when building
+# for the mobile target. Used by scripts/build-bundle.ts and the manifest
+# generator.
+#
+# These are glob patterns (fnmatch); one per line; blank lines and #-comments
+# ignored.
+
+# Documentation — we never ship docs in a mobile bundle.
+doc/**
+source/**
+
+# Babel — keep only English + Czech + German + French + Spanish. The full set
+# is ~30 MB of hyphenation tables for languages most users will never use.
+# Adjust this list per your target audience.
+tex/generic/babel-afrikaans/**
+tex/generic/babel-albanian/**
+tex/generic/babel-amharic/**
+tex/generic/babel-arabic/**
+tex/generic/babel-armenian/**
+tex/generic/babel-asturian/**
+tex/generic/babel-azerbaijani/**
+tex/generic/babel-basque/**
+tex/generic/babel-belarusian/**
+tex/generic/babel-bosnian/**
+tex/generic/babel-breton/**
+tex/generic/babel-bulgarian/**
+tex/generic/babel-catalan/**
+tex/generic/babel-chinese/**
+tex/generic/babel-croatian/**
+tex/generic/babel-danish/**
+tex/generic/babel-dutch/**
+tex/generic/babel-esperanto/**
+tex/generic/babel-estonian/**
+tex/generic/babel-finnish/**
+tex/generic/babel-friulan/**
+tex/generic/babel-galician/**
+tex/generic/babel-georgian/**
+tex/generic/babel-greek/**
+tex/generic/babel-hebrew/**
+tex/generic/babel-hindi/**
+tex/generic/babel-hungarian/**
+tex/generic/babel-icelandic/**
+tex/generic/babel-indonesian/**
+tex/generic/babel-interlingua/**
+tex/generic/babel-irish/**
+tex/generic/babel-italian/**
+tex/generic/babel-japanese/**
+tex/generic/babel-korean/**
+tex/generic/babel-kurmanji/**
+tex/generic/babel-latin/**
+tex/generic/babel-latvian/**
+tex/generic/babel-lithuanian/**
+tex/generic/babel-macedonian/**
+tex/generic/babel-malay/**
+tex/generic/babel-norsk/**
+tex/generic/babel-occitan/**
+tex/generic/babel-piedmontese/**
+tex/generic/babel-polish/**
+tex/generic/babel-portuges/**
+tex/generic/babel-romanian/**
+tex/generic/babel-romansh/**
+tex/generic/babel-russian/**
+tex/generic/babel-samin/**
+tex/generic/babel-scottish/**
+tex/generic/babel-serbian/**
+tex/generic/babel-serbianc/**
+tex/generic/babel-slovak/**
+tex/generic/babel-slovenian/**
+tex/generic/babel-sorbian/**
+tex/generic/babel-swedish/**
+tex/generic/babel-thai/**
+tex/generic/babel-turkish/**
+tex/generic/babel-turkmen/**
+tex/generic/babel-ukrainian/**
+tex/generic/babel-vietnamese/**
+tex/generic/babel-welsh/**
+
+# MetaPost / Metafont
+metafont/**
+metapost/**
+fonts/source/**
+mfware/**
+
+# Perl scripts / tools we don't have a runtime for.
+scripts/**/*.pl
+
+# Manpages
+doc/man/**
+
+# Type1 fonts source (only .pfb is needed at runtime).
+fonts/source/**

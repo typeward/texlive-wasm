@@ -1,0 +1,4 @@
+[submodule "vendor/texlive-source"]
+	path = vendor/texlive-source
+	url = https://github.com/TeX-Live/texlive-source.git
+	branch = branch2026

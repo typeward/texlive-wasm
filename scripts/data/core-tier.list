@@ -1,0 +1,49 @@
+# TDS paths included in the "core" tier (preloaded into BundleFS on every
+# engine init). Aim to cover the most common ~80% of documents:
+# - LaTeX base + tools
+# - amsmath / amsfonts / amssymb
+# - hyperref, url
+# - geometry
+# - graphicx + standard image-format support
+# - babel-english only (other languages go to "full")
+# - Computer Modern + Latin Modern font basics
+
+tex/latex/base/**
+tex/latex/tools/**
+tex/latex/required/**
+tex/latex/amsmath/**
+tex/latex/amsfonts/**
+tex/latex/amscls/**
+tex/latex/hyperref/**
+tex/latex/url/**
+tex/latex/geometry/**
+tex/latex/graphics/**
+tex/latex/graphics-cfg/**
+tex/latex/graphics-def/**
+tex/latex/oberdiek/**
+tex/latex/pdftex-def/**
+tex/latex/etoolbox/**
+tex/latex/xkeyval/**
+tex/latex/koma-script/**
+tex/latex/l3kernel/**
+tex/latex/l3packages/**
+
+tex/generic/babel/**
+tex/generic/babel-english/**
+tex/generic/hyph-utf8/**
+tex/generic/iftex/**
+
+# Format-building inputs.
+tex/plain/**
+
+# Core font metrics + maps.
+fonts/tfm/public/cm/**
+fonts/tfm/public/amsfonts/**
+fonts/tfm/public/lm/**
+fonts/map/dvips/cm/**
+fonts/map/dvips/lm/**
+
+# Core encoding / config.
+web2c/texmf.cnf
+web2c/fmtutil.cnf
+web2c/updmap.cfg

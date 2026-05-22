@@ -1,0 +1,50 @@
+# Build outputs
+node_modules/
+dist/
+build/
+.cache/
+*.tsbuildinfo
+
+# Engine build artifacts (huge)
+engine/build/
+engine/source/
+engine/.cache/
+
+# Submodule build outputs (but the source trees themselves are tracked).
+vendor/*/build/
+vendor/*/.libs/
+
+# WASM / data bundles (the staged artifacts under engine-artifacts/ ARE tracked).
+*.data
+*.tar.br
+*.tar.gz
+*.tar.zst
+public/core/
+demo/public/core/
+
+# Reference implementations — kept around for study, not part of our project.
+example/
+
+# Stray smoke-test files
+sm.mjs
+smoke.mjs
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local env
+.env
+.env.local
+
+# Reference projects' own outputs (we never build them from here)
+example/*/dist/
+example/*/build/
+example/*/node_modules/
+example/*/public/core/

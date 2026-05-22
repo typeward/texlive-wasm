@@ -4,17 +4,19 @@ A from-scratch TeX Live → WebAssembly distribution. Goal: a modular npm packag
 
 Status: **Phase 0 complete, Phase 1 mostly complete (TL 2026).** TS library + CI verified green. Engines built against **TeX Live 2026** (`branch2026`, commit `fb61589266` "tl26 post-release"):
 
-| Engine | Size | Verified |
+| Engine | Size | Smoke test (TL 2026) |
 |---|---|---|
-| `pdflatex.wasm` | 1.26 MB | ✅ smoke-tested: "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)" |
-| `xelatex.wasm` | 2.84 MB | ✅ smoke-tested: "XeTeX 3.141592653-2.6-0.999998 (TeX Live 2026), ICU 78.2" |
-| `lualatex.wasm` | 4.84 MB | ✅ smoke-tested: "LuaHBTeX 1.24.0 (TeX Live 2026)" |
+| `pdflatex.wasm` | 1.26 MB | ✅ "pdfTeX 3.141592653-2.6-1.40.29" — **compiles real `\documentclass{article}` → PDF (2.4 KB)** |
+| `xelatex.wasm` | 2.84 MB | ✅ "XeTeX 3.141592653-2.6-0.999998, ICU 78.2" |
+| `lualatex.wasm` | 4.84 MB | ✅ "LuaHBTeX 1.24.0" |
+| `bibtexu.wasm` | 877 KB | ✅ "BibTeXu 0.99d-x4.03, ICU 78.2" |
+| `xdvipdfmx.wasm` | 765 KB | ✅ instantiates |
 | `makeindex.wasm` | 192 KB | ✅ instantiates |
-| `xdvipdfmx.wasm` | 765 KB | ✅ built |
-| `bibtexu.wasm` | — | ⏳ blocked on ICU data: `libicudata.a` archive members are ELF resource objects, not wasm |
 | `synctex.wasm` | — | Deferred: synctex is built into each engine, JS parser at `src/synctex/index.ts` suffices |
 
-For xelatex: requires wasm builds of expat 2.6.4, freetype 2.13.3, fontconfig 2.15.0 (built standalone in `engine/build/wasm-libs/` via `engine/targets/fontconfig-wasm.mk`), plus the pre-built native ICU and a placeholder `icudt78_dat` stub in `engine/scripts/stubs.c`.
+End-to-end smoke test verified (`scripts/smoke-pdflatex.mjs`): `\documentclass{article}\begin{document}Hello\end{document}` → valid PDF 1.5 (2387 bytes) using our wasm pdflatex + a minimal TeX Live TDS (sourced via `scripts/fetch-tds.sh`).
+
+For xelatex + bibtexu: requires wasm builds of expat 2.6.4, freetype 2.13.3, fontconfig 2.15.0 (built standalone in `engine/build/wasm-libs/` via `engine/targets/fontconfig-wasm.mk`), the standalone native ICU pre-build (`engine/targets/icu-native.mk`), and a placeholder `icudt78_dat` stub in `engine/scripts/stubs.c` (locale-data ICU APIs return U_MISSING_RESOURCE_ERROR; basic engine startup + non-locale-specific operations work).
 
 Engine artifacts staged in `engine-artifacts/<engine>/emscripten/`. The pipeline (`engine/Dockerfile` + `engine/Makefile` + helpers + native ICU pre-build + force-include stubs) is reproducible — once Docker is available, `npm run engines:build` rebuilds them from source.
 

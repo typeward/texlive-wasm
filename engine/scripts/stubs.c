@@ -68,3 +68,16 @@ const uint8_t icudt76_dat[64] = {
  * but the icu-src in TL 2026 advertises 78 in icudt<VV>_dat name). */
 __attribute__((alias("icudt76_dat")))
 extern const uint8_t icudt78_dat[64];
+
+/* Weak no-op stub for udata_setCommonData_78.
+ *
+ * We export _udata_setCommonData_78 globally so the JS-side runtime can load
+ * the real icudt78l.dat at startup for ICU-using engines (xelatex, bibtexu).
+ * For engines that don't link ICU (pdflatex, lualatex, makeindex, xdvipdfmx),
+ * this stub satisfies the export and is a no-op. ICU's real symbol overrides
+ * via standard archive-link strong-beats-weak rules. */
+__attribute__((weak))
+void udata_setCommonData_78(const void *data, int *errorCode) {
+    (void)data;
+    if (errorCode) *errorCode = 0;
+}

@@ -7,12 +7,14 @@ Status: **Phase 0 complete, Phase 1 mostly complete (TL 2026).** TS library + CI
 | Engine | Size | Verified |
 |---|---|---|
 | `pdflatex.wasm` | 1.26 MB | ✅ smoke-tested: "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)" |
+| `xelatex.wasm` | 2.84 MB | ✅ smoke-tested: "XeTeX 3.141592653-2.6-0.999998 (TeX Live 2026), ICU 78.2" |
 | `lualatex.wasm` | 4.84 MB | ✅ smoke-tested: "LuaHBTeX 1.24.0 (TeX Live 2026)" |
 | `makeindex.wasm` | 192 KB | ✅ instantiates |
 | `xdvipdfmx.wasm` | 765 KB | ✅ built |
-| `xelatex.wasm` | — | ⏳ blocked on wasm fontconfig (xetex includes `<fontconfig/fontconfig.h>`) |
 | `bibtexu.wasm` | — | ⏳ blocked on ICU data: `libicudata.a` archive members are ELF resource objects, not wasm |
 | `synctex.wasm` | — | Deferred: synctex is built into each engine, JS parser at `src/synctex/index.ts` suffices |
+
+For xelatex: requires wasm builds of expat 2.6.4, freetype 2.13.3, fontconfig 2.15.0 (built standalone in `engine/build/wasm-libs/` via `engine/targets/fontconfig-wasm.mk`), plus the pre-built native ICU and a placeholder `icudt78_dat` stub in `engine/scripts/stubs.c`.
 
 Engine artifacts staged in `engine-artifacts/<engine>/emscripten/`. The pipeline (`engine/Dockerfile` + `engine/Makefile` + helpers + native ICU pre-build + force-include stubs) is reproducible — once Docker is available, `npm run engines:build` rebuilds them from source.
 

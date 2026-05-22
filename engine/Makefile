@@ -43,6 +43,9 @@ include targets/native.mk
 # Native ICU pre-build for engines that link against libicu (xelatex, bibtexu).
 include targets/icu-native.mk
 
+# Wasm fontconfig + expat + freetype (for xelatex).
+include targets/fontconfig-wasm.mk
+
 # Per-target rules.
 include targets/emscripten.mk
 include targets/wasi.mk

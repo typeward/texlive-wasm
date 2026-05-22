@@ -328,6 +328,7 @@ Reproducibility: pin `SOURCE_DATE_EPOCH`, fix tar ordering, sha256-check artifac
 | Engine | WASM size | JS size | Smoke test |
 |---|---|---|---|
 | `pdflatex.wasm` | 1.26 MB | 37 KB | ✅ `pdftex --version` → "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), kpathsea 6.4.2", exit 0 |
+| `xelatex.wasm` | 2.84 MB | 38 KB | ✅ `xetex --version` → "XeTeX 3.141592653-2.6-0.999998 (TeX Live 2026), ICU 78.2", exit 0 |
 | `lualatex.wasm` | 4.84 MB | 47 KB | ✅ `luahbtex --version` → "LuaHBTeX 1.24.0 (TeX Live 2026)", exit 0 |
 | `makeindex.wasm` | 192 KB | 32 KB | ✅ instantiates and runs |
 | `xdvipdfmx.wasm` | 765 KB | 36 KB | ✅ instantiates |

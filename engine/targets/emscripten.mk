@@ -92,6 +92,17 @@ TL_TEXK_xdvipdfmx:= kpathsea dvipdfm-x
 TL_TEXK_makeindex:= kpathsea makeindexk
 TL_TEXK_synctex  := kpathsea
 
+# Engines that need wasm fontconfig (only xelatex). Wired via TL_NEEDS_FC_*
+# in the recipe; injects -I/path/to/fontconfig into CFLAGS/CXXFLAGS so TL's
+# xetex source can find <fontconfig/fontconfig.h> at compile time.
+TL_NEEDS_FC_pdflatex  :=
+TL_NEEDS_FC_xelatex   := 1
+TL_NEEDS_FC_lualatex  :=
+TL_NEEDS_FC_bibtexu   :=
+TL_NEEDS_FC_xdvipdfmx :=
+TL_NEEDS_FC_makeindex :=
+TL_NEEDS_FC_synctex   :=
+
 # Per-engine: the specific target to build in texk/web2c. We avoid `make all`
 # in web2c because it compiles luaharfbuzz/lualibs even for non-lua engines.
 TL_WEB2C_TARGET_pdflatex := pdftex
@@ -195,13 +206,41 @@ TL_LINK_ARCS_lualatex := \
 	texk/web2c/libunilib.a \
 	texk/web2c/libmd5.a
 
-# Others: not wired yet (re-link skipped, fallback to TL-built artifact).
-TL_LINK_OBJS_xelatex   :=
+# xelatex: 5 .o + ~13 archives + our wasm fontconfig/expat (built outside Work).
+TL_LINK_OBJS_xelatex := \
+	texk/web2c/xetexdir/xetex-xetexextra.o \
+	texk/web2c/synctexdir/xetex-synctex.o \
+	texk/web2c/xetex-xetexini.o \
+	texk/web2c/xetex-xetex0.o \
+	texk/web2c/xetex-xetex-pool.o
+TL_LINK_ARCS_xelatex := \
+	texk/web2c/libxetex.a \
+	texk/web2c/libmd5.a \
+	texk/web2c/lib/lib.a \
+	libs/harfbuzz/libharfbuzz.a \
+	libs/graphite2/libgraphite2.a \
+	libs/icu/icu-build/lib/libicuuc.a \
+	libs/icu/icu-build/lib/libicudata.a \
+	libs/teckit/libTECkit.a \
+	libs/libpng/libpng.a \
+	libs/freetype2/libfreetype.a \
+	libs/pplib/libpplib.a \
+	libs/zlib/libz.a \
+	texk/kpathsea/.libs/libkpathsea.a
+
+# Absolute-path extras (wasm-libs/, not Work-relative).
+TL_LINK_EXTRA_xelatex := $(FONTCONFIG_LIB) $(EXPAT_LIB)
+
 TL_LINK_OBJS_bibtexu   :=
 TL_LINK_OBJS_synctex   :=
-TL_LINK_ARCS_xelatex   :=
 TL_LINK_ARCS_bibtexu   :=
 TL_LINK_ARCS_synctex   :=
+TL_LINK_EXTRA_pdflatex :=
+TL_LINK_EXTRA_lualatex :=
+TL_LINK_EXTRA_makeindex:=
+TL_LINK_EXTRA_xdvipdfmx:=
+TL_LINK_EXTRA_bibtexu  :=
+TL_LINK_EXTRA_synctex  :=
 
 # Per-engine: which web2c *_DEPEND vars to leave intact. Anything not in this
 # list gets blanked via sed after configure, so its hardcoded "rebuild lib X"
@@ -253,7 +292,7 @@ define ENGINE_TEMPLATE_em
 .PHONY: $(1)-emscripten
 $(1)-emscripten: $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm
 
-$$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$(1)),$$(ICU_NATIVE_DONE)) | source
+$$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$(1)),$$(ICU_NATIVE_DONE)) $$(if $$(TL_NEEDS_FC_$(1)),$$(WASM_LIBS_DONE)) | source
 	@if [ -z "$$(TL_CONFIGURE_FLAG_$(1))" ]; then \
 	  echo "==> [emscripten] $(1) — no configure flag wired yet, emitting stub"; \
 	  mkdir -p $$(BUILD_DIR)/$(1)/emscripten; \
@@ -276,8 +315,9 @@ $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$
 	    $$(TL_CONFIGURE_COMMON) \
 	    $$(TL_CONFIGURE_FLAG_$(1)) \
 	    CC="$$$$WRAPPER emcc" CXX="$$$$WRAPPER em++" \
-	    CFLAGS="$$(OPT) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion -include $$(ROOT)/scripts/stubs_force.h" \
-	    CXXFLAGS="$$(OPT) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion -include $$(ROOT)/scripts/stubs_force.h" \
+	    CFLAGS="$$(OPT) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion -include $$(ROOT)/scripts/stubs_force.h $$(if $$(TL_NEEDS_FC_$(1)),-I$$(FONTCONFIG_SRC) -I$$(FONTCONFIG_BUILD) -I$$(FREETYPE_INCLUDE) -I$$(EXPAT_INCLUDE))" \
+	    CXXFLAGS="$$(OPT) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion -include $$(ROOT)/scripts/stubs_force.h $$(if $$(TL_NEEDS_FC_$(1)),-I$$(FONTCONFIG_SRC) -I$$(FONTCONFIG_BUILD) -I$$(FREETYPE_INCLUDE) -I$$(EXPAT_INCLUDE))" \
+	    $$(if $$(TL_NEEDS_FC_$(1)),FONTCONFIG_CFLAGS="-I$$(FONTCONFIG_SRC) -I$$(FONTCONFIG_BUILD)" FONTCONFIG_LIBS="$$(FONTCONFIG_LIB) $$(EXPAT_LIB)") \
 	    > configure.log 2>&1 \
 	  || (echo "==> [emscripten] $(1) — configure FAILED. Tail of configure.log:"; \
 	      tail -60 configure.log; \
@@ -308,6 +348,18 @@ $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$
 	  $$(ROOT)/scripts/patch-icu-makefile.sh \
 	    $$(BUILD_DIR)/$(1)/emscripten/Work/libs/icu/Makefile; \
 	fi; \
+	if [ -n "$$(TL_NEEDS_ICU_$(1))" ] && [ -f $$(BUILD_DIR)/$(1)/emscripten/Work/texk/web2c/Makefile ]; then \
+	  echo "==> [emscripten] $(1) — injecting stubs.o into engine LDADD lines"; \
+	  STUBS_O_ABS=$$(BUILD_DIR)/$(1)/emscripten/stubs.o; \
+	  for engine_name in xetex luatex luahbtex bibtexu; do \
+	    sed -i "s|^$$$${engine_name}_LDADD = .*$$$$|& $$$$STUBS_O_ABS|" \
+	      $$(BUILD_DIR)/$(1)/emscripten/Work/texk/web2c/Makefile 2>/dev/null || true; \
+	  done; \
+	  if [ -f $$(BUILD_DIR)/$(1)/emscripten/Work/texk/bibtex-x/Makefile ]; then \
+	    sed -i "s|^bibtexu_LDADD = .*$$$$|& $$$$STUBS_O_ABS|" \
+	      $$(BUILD_DIR)/$(1)/emscripten/Work/texk/bibtex-x/Makefile 2>/dev/null || true; \
+	  fi; \
+	fi; \
 	echo "==> [emscripten] $(1) — make (top-level libs+texk, then web2c/$$(TL_WEB2C_TARGET_$(1)))"; \
 	cd $$(BUILD_DIR)/$(1)/emscripten/Work && \
 	  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 && \
@@ -337,7 +389,7 @@ $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$
 	  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 && \
 	  STUBS_O=$$$$OUT_DIR/stubs.o && \
 	  emcc -Oz -c $$(ROOT)/scripts/stubs.c -o $$$$STUBS_O 2>/dev/null && \
-	  em++ $$(EMCC_COMMON) -o $$$$OUT_DIR/$(1).js $$$$OBJS $$$$STUBS_O $$$$ARCS \
+	  em++ $$(EMCC_COMMON) -o $$$$OUT_DIR/$(1).js $$$$OBJS $$$$STUBS_O $$$$ARCS $$(TL_LINK_EXTRA_$(1)) \
 	    > $$$$OUT_DIR/link.log 2>&1 \
 	  || (echo "==> [emscripten] $(1) — link FAILED:"; tail -30 $$$$OUT_DIR/link.log; exit 1); \
 	else \

@@ -231,9 +231,22 @@ TL_LINK_ARCS_xelatex := \
 # Absolute-path extras (wasm-libs/, not Work-relative).
 TL_LINK_EXTRA_xelatex := $(FONTCONFIG_LIB) $(EXPAT_LIB)
 
-TL_LINK_OBJS_bibtexu   :=
+# bibtexu: 6 .o + kpathsea + ICU libs.
+TL_LINK_OBJS_bibtexu := \
+	texk/bibtex-x/bibtexu-bibtex-1.o \
+	texk/bibtex-x/bibtexu-bibtex-2.o \
+	texk/bibtex-x/bibtexu-bibtex-3.o \
+	texk/bibtex-x/bibtexu-bibtex-4.o \
+	texk/bibtex-x/bibtexu-bibtex.o \
+	texk/bibtex-x/bibtexu-utils.o
+TL_LINK_ARCS_bibtexu := \
+	texk/kpathsea/.libs/libkpathsea.a \
+	libs/icu/icu-build/lib/libicuio.a \
+	libs/icu/icu-build/lib/libicui18n.a \
+	libs/icu/icu-build/lib/libicuuc.a \
+	libs/icu/icu-build/lib/libicudata.a
+
 TL_LINK_OBJS_synctex   :=
-TL_LINK_ARCS_bibtexu   :=
 TL_LINK_ARCS_synctex   :=
 TL_LINK_EXTRA_pdflatex :=
 TL_LINK_EXTRA_lualatex :=

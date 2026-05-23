@@ -21,25 +21,51 @@ function serveEngineArtifacts(): Plugin {
     configureServer(server) {
       server.middlewares.use('/core', (req, res, next) => {
         const urlPath = (req.url ?? '/').split('?')[0];
-        const filePath = resolve(ENGINE_ARTIFACTS, '.' + urlPath);
-        if (!filePath.startsWith(ENGINE_ARTIFACTS)) {
+        const requested = resolve(ENGINE_ARTIFACTS, '.' + urlPath);
+        if (!requested.startsWith(ENGINE_ARTIFACTS)) {
           res.statusCode = 403;
           return res.end('Forbidden');
         }
+
+        // Pre-compressed asset negotiation: if the client advertises br/gzip
+        // and a sibling .br/.gz file exists, serve that with the appropriate
+        // Content-Encoding header. Saves ~70% on .wasm transfer in the demo.
+        const accept = (req.headers['accept-encoding'] as string | undefined) ?? '';
+        const candidates = [
+          accept.includes('br') ? { ext: '.br', enc: 'br' } : null,
+          accept.includes('gzip') ? { ext: '.gz', enc: 'gzip' } : null,
+        ].filter((x): x is { ext: string; enc: string } => x !== null);
+
+        let filePath = requested;
+        let encoding: string | null = null;
+        for (const c of candidates) {
+          const pre = requested + c.ext;
+          if (existsSync(pre) && statSync(pre).isFile()) {
+            filePath = pre;
+            encoding = c.enc;
+            break;
+          }
+        }
+
         if (!existsSync(filePath) || !statSync(filePath).isFile()) {
           return next();
         }
-        const contentType = filePath.endsWith('.js')
+        const base = filePath.replace(/\.(br|gz)$/, '');
+        const contentType = base.endsWith('.js')
           ? 'application/javascript'
-          : filePath.endsWith('.wasm')
+          : base.endsWith('.wasm')
             ? 'application/wasm'
-            : filePath.endsWith('.tar.gz')
+            : base.endsWith('.tar.gz')
               ? 'application/gzip'
-              : filePath.endsWith('.tar.br')
+              : base.endsWith('.tar.br')
                 ? 'application/x-brotli'
-                : 'application/octet-stream';
+                : base.endsWith('.dat')
+                  ? 'application/octet-stream'
+                  : 'application/octet-stream';
         res.setHeader('Content-Type', contentType);
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        if (encoding) res.setHeader('Content-Encoding', encoding);
+        res.setHeader('Content-Length', String(statSync(filePath).size));
         createReadStream(filePath).pipe(res);
       });
     },

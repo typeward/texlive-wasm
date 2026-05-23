@@ -81,3 +81,39 @@ void udata_setCommonData_78(const void *data, int *errorCode) {
     (void)data;
     if (errorCode) *errorCode = 0;
 }
+
+/* WASI lacks fork/exec — kpathsea's tex-make.c uses these for on-demand
+ * mktex script invocation, which we don't ship in the WASM bundle anyway.
+ * Stubs return -1 so the fork() guard in tex-make.c bails out gracefully. */
+#ifdef __wasi__
+#include <errno.h>
+#include <unistd.h>
+#include <sys/types.h>
+typedef int pid_t_shim_;
+pid_t fork(void) { errno = ENOSYS; return -1; }
+pid_t vfork(void) { errno = ENOSYS; return -1; }
+pid_t wait(int *s) { (void)s; errno = ECHILD; return -1; }
+pid_t waitpid(pid_t p, int *s, int o) { (void)p; (void)s; (void)o; errno = ECHILD; return -1; }
+int execvp(const char *f, char *const a[]) { (void)f; (void)a; errno = ENOSYS; return -1; }
+int execv(const char *f, char *const a[]) { (void)f; (void)a; errno = ENOSYS; return -1; }
+int execve(const char *f, char *const a[], char *const e[]) { (void)f; (void)a; (void)e; errno = ENOSYS; return -1; }
+int pipe(int fds[2]) { (void)fds; errno = ENOSYS; return -1; }
+int dup(int fd) { (void)fd; errno = EBADF; return -1; }
+int dup2(int o, int n) { (void)o; (void)n; errno = EBADF; return -1; }
+int kill(pid_t p, int s) { (void)p; (void)s; errno = ENOSYS; return -1; }
+/* Single-threaded WASI: flockfile/funlockfile are no-ops. */
+void flockfile(FILE *f) { (void)f; }
+int ftrylockfile(FILE *f) { (void)f; return 0; }
+void funlockfile(FILE *f) { (void)f; }
+struct passwd;
+struct passwd *getpwnam(const char *n) { (void)n; return 0; }
+struct passwd *getpwuid(unsigned u) { (void)u; return 0; }
+uid_t getuid(void) { return 0; }
+uid_t geteuid(void) { return 0; }
+gid_t getgid(void) { return 0; }
+gid_t getegid(void) { return 0; }
+/* \write18 / shell-escape — disabled in WASM build. */
+FILE *popen(const char *c, const char *m) { (void)c; (void)m; errno = ENOSYS; return 0; }
+int pclose(FILE *f) { (void)f; errno = ECHILD; return -1; }
+int system(const char *c) { (void)c; errno = ENOSYS; return -1; }
+#endif

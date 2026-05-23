@@ -32,4 +32,46 @@ typedef off_t off64_t;
 
 #endif /* __EMSCRIPTEN__ */
 
+#ifdef __wasi__
+#include <sys/types.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <pwd.h>
+#ifndef TLWASM_WASI_FORCE
+#define TLWASM_WASI_FORCE 1
+#ifdef __cplusplus
+extern "C" {
+#endif
+uid_t getuid(void);
+uid_t geteuid(void);
+gid_t getgid(void);
+gid_t getegid(void);
+char *getpass(const char *);
+typedef off_t off64_t;
+
+void  flockfile(FILE *);
+int   ftrylockfile(FILE *);
+void  funlockfile(FILE *);
+FILE *popen(const char *, const char *);
+int   pclose(FILE *);
+int   system(const char *);
+struct passwd *getpwnam(const char *);
+struct passwd *getpwuid(uid_t);
+pid_t fork(void);
+pid_t vfork(void);
+pid_t wait(int *);
+pid_t waitpid(pid_t, int *, int);
+int   execvp(const char *, char *const[]);
+int   execv(const char *, char *const[]);
+int   execve(const char *, char *const[], char *const[]);
+int   pipe(int[2]);
+int   dup(int);
+int   dup2(int, int);
+int   kill(pid_t, int);
+#ifdef __cplusplus
+}
+#endif
+#endif
+#endif /* __wasi__ */
+
 #endif /* TLWASM_STUBS_FORCE_H */

@@ -4,6 +4,21 @@
 #   make pdflatex-emscripten OPT=-O0
 OPT ?= -Oz
 
+# WebAssembly threading. Adds atomics + bulk-memory opcodes to the compiled
+# wasm so libs (libharfbuzz, ICU, lua* runtimes) can call pthread primitives
+# instead of degrading to no-ops. Requires the host page to be cross-origin
+# isolated (COOP=same-origin + COEP=require-corp) so SharedArrayBuffer is
+# available. Disable for the legacy single-thread build with
+# `make ... ENABLE_THREADS=0`.
+ENABLE_THREADS ?= 1
+ifeq ($(ENABLE_THREADS),1)
+THREAD_CFLAGS  := -pthread -mbulk-memory -matomics
+THREAD_LDFLAGS := -pthread -sSHARED_MEMORY=1
+else
+THREAD_CFLAGS  :=
+THREAD_LDFLAGS :=
+endif
+
 # Reproducible builds.
 export SOURCE_DATE_EPOCH ?= 1700000000
 

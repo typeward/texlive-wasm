@@ -101,3 +101,9 @@ dist: all
 	  done; \
 	done
 	@echo "==> Dist tree:" && find $(DIST_DIR) -type f -name '*.wasm' -o -name '*.js' | sort
+
+# Post-process artifacts: brotli + gzip pre-compression for static-host serving.
+# Idempotent; safe to re-run.
+.PHONY: optimize
+optimize:
+	@bash $(ROOT)/scripts/optimize-wasm.sh

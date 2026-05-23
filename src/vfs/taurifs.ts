@@ -73,41 +73,32 @@ export async function createTauriFs(opts: TauriFsOptions): Promise<VfsBackend> {
 }
 
 /**
- * Wrap an existing engine handle and inject TauriFS into its backend chain.
- *
- * In the current skeleton the worker holds the backend list internally;
- * `withTauriFs` re-creates the engine with TauriFS prepended ahead of any
- * OPFS/FETCHFS layers. (Phase 1: implement the re-init plumbing.)
+ * Detect whether the current runtime is a Tauri app. Cheap and safe to
+ * call from anywhere (returns false in Node, browsers, web workers).
  */
-export async function withTauriFs<T extends EngineHandle>(
-  engine: T,
-  _opts: TauriFsOptions,
-): Promise<T> {
-  // TODO(phase 2): plumb a runtime layer-injection API through worker.ts.
-  // For now, log a hint and return the engine unchanged so the demo runs.
-  // eslint-disable-next-line no-console
-  console.warn(
-    '[texlive-wasm/tauri] withTauriFs is a Phase 2 stub. ' +
-      'Pass `vfs: [...]` to createEngine() to install TauriFS explicitly.',
-  );
-  return engine;
+export function isTauri(): boolean {
+  const g = globalThis as { __TAURI_INTERNALS__?: unknown; __TAURI__?: unknown };
+  return Boolean(g.__TAURI_INTERNALS__ || g.__TAURI__);
 }
 
 /**
- * Build-time helper: unpack the bundled "full" tarball into the Tauri
- * resources directory so it ships with the app.
+ * Convenience: create an engine with TauriFS prepended to its backend list.
  *
- * Invoked from the consumer's build pipeline (e.g. `tauri before-build`),
- * not from the running app. Lives in this file for discoverability; the
- * actual implementation is in scripts/build-bundle.ts.
+ * Use this when the consumer wants the engine to read TDS files straight
+ * from the bundled Tauri resources. The TauriFs backend is consulted first
+ * (highest priority), so any file present locally wins over CDN fallback.
+ *
+ * The actual engine is constructed by the caller-supplied factory, which
+ * receives the prepared backend chain. In practice the factory is just
+ * `createEngine` from this package.
  */
-export async function prepareTauriResources(_opts: {
-  /** Path to write the unpacked texmf/ tree into. */
-  outDir: string;
-  /** Source: 'core' (smaller) or 'full' (default). */
-  tier?: 'core' | 'full';
-}): Promise<void> {
-  throw new Error(
-    'prepareTauriResources: run `npx texlive-wasm prepare-resources` from your shell instead.',
-  );
+export async function withTauriFs(
+  factory: (vfs: VfsBackend[]) => Promise<EngineHandle>,
+  opts: TauriFsOptions & { extraBackends?: VfsBackend[] },
+): Promise<EngineHandle> {
+  if (!isTauri()) {
+    throw new Error('withTauriFs: not running in a Tauri app (window.__TAURI__ missing)');
+  }
+  const tauriFs = await createTauriFs(opts);
+  return factory([tauriFs, ...(opts.extraBackends ?? [])]);
 }

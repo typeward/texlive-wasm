@@ -35,10 +35,12 @@ EMSDK_ENV := source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 &&
 # Single-threaded is fine for v1; we can rebuild libs with -pthread later.
 EMCC_COMMON := \
 	$(OPT) \
+	$(THREAD_LDFLAGS) \
 	-sWASMFS=1 \
 	-sALLOW_MEMORY_GROWTH=1 \
-	-sINITIAL_MEMORY=67108864 \
+	-sINITIAL_MEMORY=134217728 \
 	-sMAXIMUM_MEMORY=2147483648 \
+	-sSTACK_SIZE=8388608 \
 	-sMODULARIZE=1 \
 	-sEXPORT_ES6=1 \
 	-sEXPORTED_RUNTIME_METHODS=FS,callMain,PATH,HEAPU8,HEAPU32 \
@@ -328,8 +330,8 @@ $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$
 	    $$(TL_CONFIGURE_COMMON) \
 	    $$(TL_CONFIGURE_FLAG_$(1)) \
 	    CC="$$$$WRAPPER emcc" CXX="$$$$WRAPPER em++" \
-	    CFLAGS="$$(OPT) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion -include $$(ROOT)/scripts/stubs_force.h $$(if $$(TL_NEEDS_FC_$(1)),-I$$(FONTCONFIG_SRC) -I$$(FONTCONFIG_BUILD) -I$$(FREETYPE_INCLUDE) -I$$(EXPAT_INCLUDE))" \
-	    CXXFLAGS="$$(OPT) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion -include $$(ROOT)/scripts/stubs_force.h $$(if $$(TL_NEEDS_FC_$(1)),-I$$(FONTCONFIG_SRC) -I$$(FONTCONFIG_BUILD) -I$$(FREETYPE_INCLUDE) -I$$(EXPAT_INCLUDE))" \
+	    CFLAGS="$$(OPT) $$(THREAD_CFLAGS) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion -include $$(ROOT)/scripts/stubs_force.h $$(if $$(TL_NEEDS_FC_$(1)),-I$$(FONTCONFIG_SRC) -I$$(FONTCONFIG_BUILD) -I$$(FREETYPE_INCLUDE) -I$$(EXPAT_INCLUDE))" \
+	    CXXFLAGS="$$(OPT) $$(THREAD_CFLAGS) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion -include $$(ROOT)/scripts/stubs_force.h $$(if $$(TL_NEEDS_FC_$(1)),-I$$(FONTCONFIG_SRC) -I$$(FONTCONFIG_BUILD) -I$$(FREETYPE_INCLUDE) -I$$(EXPAT_INCLUDE))" \
 	    $$(if $$(TL_NEEDS_FC_$(1)),FONTCONFIG_CFLAGS="-I$$(FONTCONFIG_SRC) -I$$(FONTCONFIG_BUILD)" FONTCONFIG_LIBS="$$(FONTCONFIG_LIB) $$(EXPAT_LIB)") \
 	    > configure.log 2>&1 \
 	  || (echo "==> [emscripten] $(1) — configure FAILED. Tail of configure.log:"; \
@@ -361,30 +363,37 @@ $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$
 	  $$(ROOT)/scripts/patch-icu-makefile.sh \
 	    $$(BUILD_DIR)/$(1)/emscripten/Work/libs/icu/Makefile; \
 	fi; \
-	if [ -n "$$(TL_NEEDS_ICU_$(1))" ] && [ -f $$(BUILD_DIR)/$(1)/emscripten/Work/texk/web2c/Makefile ]; then \
-	  echo "==> [emscripten] $(1) — injecting stubs.o into engine LDADD lines"; \
-	  STUBS_O_ABS=$$(BUILD_DIR)/$(1)/emscripten/stubs.o; \
-	  for engine_name in xetex luatex luahbtex bibtexu; do \
-	    sed -i "s|^$$$${engine_name}_LDADD = .*$$$$|& $$$$STUBS_O_ABS|" \
-	      $$(BUILD_DIR)/$(1)/emscripten/Work/texk/web2c/Makefile 2>/dev/null || true; \
-	  done; \
-	  if [ -f $$(BUILD_DIR)/$(1)/emscripten/Work/texk/bibtex-x/Makefile ]; then \
-	    sed -i "s|^bibtexu_LDADD = .*$$$$|& $$$$STUBS_O_ABS|" \
-	      $$(BUILD_DIR)/$(1)/emscripten/Work/texk/bibtex-x/Makefile 2>/dev/null || true; \
-	  fi; \
-	fi; \
 	echo "==> [emscripten] $(1) — make (top-level libs+texk, then web2c/$$(TL_WEB2C_TARGET_$(1)))"; \
 	cd $$(BUILD_DIR)/$(1)/emscripten/Work && \
 	  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 && \
 	  export PATH="$$$$HELPER_PATH:$$$$PATH" && \
 	  export PKGDATA_OPTS="--without-assembly -O $$(BUILD_DIR)/$(1)/emscripten/Work/libs/icu/icu-native/data/icupkg.inc" && \
 	  ( \
-	    emmake $$(MAKE) -j$$(shell nproc 2>/dev/null || echo 2) && \
+	    emmake $$(MAKE) -j$$(shell nproc 2>/dev/null || echo 2) > make.log 2>&1; \
+	    LIB_RC=$$$$?; \
+	    if [ "$$$$LIB_RC" -ne 0 ] && [ -z "$$$$(find libs texk/kpathsea -name '*.a' -type f 2>/dev/null | head -1)" ]; then \
+	      echo "==> [emscripten] $(1) — top-level make produced no static libs; aborting"; \
+	      tail -60 make.log; exit 1; \
+	    fi; \
+	    if [ -n "$$(TL_NEEDS_ICU_$(1))" ] && [ -f texk/web2c/Makefile ]; then \
+	      echo "==> [emscripten] $(1) — injecting stubs.o into engine LDADD lines (post-make)"; \
+	      STUBS_O_ABS=$$(BUILD_DIR)/$(1)/emscripten/stubs.o; \
+	      for engine_name in xetex luatex luahbtex bibtexu; do \
+	        sed -i "s|^$$$${engine_name}_LDADD = .*$$$$|& $$$$STUBS_O_ABS|" \
+	          texk/web2c/Makefile 2>/dev/null || true; \
+	      done; \
+	      if [ -f texk/bibtex-x/Makefile ]; then \
+	        sed -i "s|^bibtexu_LDADD = .*$$$$|& $$$$STUBS_O_ABS|" \
+	          texk/bibtex-x/Makefile 2>/dev/null || true; \
+	      fi; \
+	    fi; \
 	    if [ -n "$$(TL_WEB2C_TARGET_$(1))" ] && [ -f texk/web2c/Makefile ]; then \
-	      emmake $$(MAKE) -C texk/web2c -j$$(shell nproc 2>/dev/null || echo 2) $$(TL_WEB2C_TARGET_$(1)); \
-	    fi \
-	  ) > make.log 2>&1 \
-	  || (echo "==> [emscripten] $(1) — make FAILED. Tail of make.log:"; \
+	      emmake $$(MAKE) -C texk/web2c -j$$(shell nproc 2>/dev/null || echo 2) $$(TL_WEB2C_TARGET_$(1)) >> make.log 2>&1 || \
+	        echo "==> [emscripten] $(1) — TL inner web2c link failed (ok, we re-link with our flags below)"; \
+	    fi; \
+	    true \
+	  ) \
+	  || (echo "==> [emscripten] $(1) — make wrapper FAILED. Tail of make.log:"; \
 	      tail -60 make.log; exit 1); \
 	echo "==> [emscripten] $(1) — final link / stage"; \
 	WORK=$$(BUILD_DIR)/$(1)/emscripten/Work; \

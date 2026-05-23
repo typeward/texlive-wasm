@@ -8,12 +8,13 @@
  *
  *   import { createEngine } from 'texlive-wasm';
  *   import { withTauriFs } from 'texlive-wasm/tauri';
+ *   import { BaseDirectory } from '@tauri-apps/plugin-fs';
  *
  *   const engine = await withTauriFs(
- *     createEngine('xelatex', { manifestUrl: '/texmf/manifest.json' }),
- *     { texmfRoot: 'texmf', baseDir: BaseDirectory.AppData },
+ *     (vfs) => createEngine('xelatex', { vfs }),
+ *     { texmfRoot: 'texmf', baseDir: BaseDirectory.Resource },
  *   );
  */
 
-export { withTauriFs, prepareTauriResources } from './vfs/taurifs';
+export { createTauriFs, withTauriFs, isTauri } from './vfs/taurifs';
 export type { TauriFsOptions } from './vfs/taurifs';

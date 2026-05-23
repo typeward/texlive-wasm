@@ -181,16 +181,44 @@ class WorkerImpl implements WorkerApi {
     );
     const argv = [...standardArgs, ...opts.args];
 
+    // On-miss lazy fetch: TeX engines log every kpathsea miss they recover
+    // from via `mktexpk` etc. but a real "I can't find file X" hard-fails
+    // the compile. We catch those, ask the backends for the files, write
+    // them to MEMFS, and re-run once. Bounded to a single retry so a
+    // genuinely-missing file doesn't loop forever.
+    const lazyFetch = opts.lazyFetch !== false;
+    const maxRetries = lazyFetch ? 1 : 0;
     let exitCode = 0;
-    try {
-      exitCode = this.module.callMain(argv);
-    } catch (err) {
-      const e = err as { status?: number };
-      if (typeof e?.status === 'number') {
-        exitCode = e.status;
-      } else {
-        throw err;
+    let retriesUsed = 0;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const attemptStdout = attempt === 0 ? '' : stdout;
+      const attemptStderr = attempt === 0 ? '' : stderr;
+      stdout = '';
+      stderr = '';
+      try {
+        exitCode = this.module.callMain(argv);
+      } catch (err) {
+        const e = err as { status?: number };
+        if (typeof e?.status === 'number') {
+          exitCode = e.status;
+        } else {
+          throw err;
+        }
       }
+      stdout = attemptStdout + stdout;
+      stderr = attemptStderr + stderr;
+
+      if (exitCode === 0 || attempt === maxRetries) break;
+
+      // Parse the .log we just wrote for files kpathsea couldn't find.
+      const currentLog = findLog(FS, opts.args);
+      const missing = parseMissingFiles(currentLog);
+      if (missing.length === 0) break;
+
+      const fetched = await this.fetchMissingIntoMemFs(FS, missing);
+      if (fetched === 0) break;
+      retriesUsed++;
     }
 
     const outputs = new Map<string, Uint8Array>();
@@ -203,7 +231,44 @@ class WorkerImpl implements WorkerApi {
       outputs,
       log: findLog(FS, opts.args),
       durationMs: performance.now() - startedAt,
+      lazyFetchRetries: retriesUsed,
     };
+  }
+
+  /**
+   * For each missing TDS path the log complained about, walk the backend
+   * chain and write the bytes into MEMFS. Returns how many files were
+   * successfully resolved. Searches multiple plausible TDS sublocations
+   * because the log usually says "lmroman10-regular.otf", not the absolute
+   * /texmf-dist/fonts/opentype/public/lm/lmroman10-regular.otf.
+   */
+  private async fetchMissingIntoMemFs(FS: EmscriptenFS, missing: string[]): Promise<number> {
+    let written = 0;
+    for (const name of missing) {
+      const candidates = expandMissingName(name);
+      for (const candidate of candidates) {
+        let bytes: Uint8Array | null = null;
+        for (const backend of this.backends) {
+          const r = await backend.read(candidate);
+          if (r) {
+            bytes = r;
+            break;
+          }
+        }
+        if (bytes) {
+          const absolute = `/texmf-dist/${candidate.replace(/^\/+/, '')}`;
+          mkdirP(FS, dirname(absolute));
+          try {
+            FS.writeFile(absolute, bytes);
+            written++;
+          } catch {
+            // Already exists or unwritable — non-fatal.
+          }
+          break;
+        }
+      }
+    }
+    return written;
   }
 
   async dispose(): Promise<void> {
@@ -288,6 +353,59 @@ function collectFiles(
       out.set(rel, FS.readFile(abs));
     }
   }
+}
+
+/**
+ * Pull "I can't find file `x.sty'" / "Font ... not found" / "! LaTeX
+ * Error: File `x.sty' not found" lines out of the .log and return the
+ * referenced filenames.
+ */
+function parseMissingFiles(log: string): string[] {
+  if (!log) return [];
+  const out = new Set<string>();
+  const patterns = [
+    /I can't find file `([^']+)'/g,
+    /File `([^']+)' not found/g,
+    /file `([^']+)' is not loadable/g,
+    /Cannot find ([\w.-]+\.(?:sty|cls|fd|def|cfg|tfm|vf|pfb|otf|ttf|mf|enc|map))/gi,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(log)) !== null) {
+      const name = m[1]?.trim();
+      if (name && !name.includes('//') && !name.startsWith('-')) out.add(name);
+    }
+  }
+  return Array.from(out);
+}
+
+/**
+ * Given a bare file name like "amsmath.sty", produce the candidate TDS
+ * subpaths a backend might serve it under. The backend's read() will be
+ * tried for each in order.
+ */
+function expandMissingName(name: string): string[] {
+  if (name.startsWith('/')) return [name];
+  if (name.includes('/')) return [name];
+  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
+  const stem = name;
+  const out = [stem];
+  if (ext === 'sty' || ext === 'cls' || ext === 'def' || ext === 'fd' || ext === 'cfg') {
+    out.push(`tex/latex/${stem.replace(/\.\w+$/, '')}/${stem}`);
+    out.push(`tex/latex/base/${stem}`);
+  } else if (ext === 'tex' || ext === 'ltx') {
+    out.push(`tex/generic/${stem.replace(/\.\w+$/, '')}/${stem}`);
+  } else if (ext === 'tfm') {
+    out.push(`fonts/tfm/public/${stem.replace(/\.\w+$/, '')}/${stem}`);
+  } else if (ext === 'otf' || ext === 'ttf') {
+    out.push(`fonts/opentype/public/${stem.replace(/\d.*$/, '')}/${stem}`);
+    out.push(`fonts/truetype/public/${stem.replace(/\d.*$/, '')}/${stem}`);
+  } else if (ext === 'pfb' || ext === 'pfa') {
+    out.push(`fonts/type1/public/${stem.replace(/\d.*$/, '')}/${stem}`);
+  } else if (ext === 'map' || ext === 'enc') {
+    out.push(`fonts/${ext}/dvips/${stem.replace(/\.\w+$/, '')}/${stem}`);
+  }
+  return out;
 }
 
 function findLog(FS: EmscriptenFS, args: string[]): string {

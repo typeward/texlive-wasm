@@ -52,3 +52,5 @@ function isOpfsAvailable(): boolean {
 export { createBundleFs } from './bundlefs';
 export { createOpfsFs } from './opfsfs';
 export { createFetchFs } from './fetchfs';
+export { createTauriFs, isTauri, withTauriFs } from './taurifs';
+export type { TauriFsOptions } from './taurifs';

@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const m = await import("./engine-artifacts/pdflatex/emscripten/pdflatex.js");
+const REPO = new URL("..", import.meta.url).pathname;
+const m = await import(join(REPO, "engine-artifacts/pdflatex/emscripten/pdflatex.js"));
 
 function walk(FS, absDir, mfsDir) {
   if (!FS.analyzePath(mfsDir).exists) FS.mkdir(mfsDir);
@@ -22,7 +23,7 @@ const Module = await m.default({
   printErr: (t) => console.error("E:", t),
 });
 
-walk(Module.FS, "./engine-artifacts/texmf", "/texmf-dist");
+walk(Module.FS, join(REPO, "engine-artifacts/texmf"), "/texmf-dist");
 Module.FS.mkdir("/bin");
 Module.FS.writeFile("/bin/pdflatex", new Uint8Array());
 Module.FS.mkdir("/project");
@@ -51,8 +52,9 @@ console.log("EXIT:", exitCode);
 
 if (Module.FS.analyzePath("/project/hello.pdf").exists) {
   const pdf = Module.FS.readFile("/project/hello.pdf");
-  writeFileSync("hello-from-wasm.pdf", pdf);
+  writeFileSync(join(REPO, "hello-from-wasm.pdf"), pdf);
   console.log("PDF:", pdf.length, "bytes");
+  process.exit(0);
 } else if (Module.FS.analyzePath("/project/hello.log").exists) {
   const log = new TextDecoder().decode(Module.FS.readFile("/project/hello.log"));
   // Look for first error

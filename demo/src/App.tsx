@@ -1,4 +1,5 @@
-import { createSignal, onMount, Show } from 'solid-js';
+import { createSignal, onMount } from 'solid-js';
+import { PdfViewer } from './PdfViewer';
 
 const DEFAULT_DOC = `\\documentclass{article}
 \\usepackage{amsmath}
@@ -110,13 +111,22 @@ export function App() {
 
     setStatus('loading TDS bundle (~18 MB brotli)...');
     const t0 = performance.now();
-    const resp = await fetch('/core/texmf.tar.gz');
-    if (!resp.ok) throw new Error(`TDS bundle: HTTP ${resp.status}`);
-    const compressed = new Uint8Array(await resp.arrayBuffer());
-    setStatus(`decompressing TDS (${(compressed.length / 1024 / 1024).toFixed(1)} MB)...`);
-    const ds = new DecompressionStream('gzip');
-    const stream = new Blob([compressed.buffer as ArrayBuffer]).stream().pipeThrough(ds);
-    const tarBytes = new Uint8Array(await new Response(stream).arrayBuffer());
+    // Fetches the raw .tar path; the dev server upgrades it to brotli or gzip
+    // via Content-Encoding negotiation, and the browser decompresses
+    // transparently. Saves ~10 MB over the manual gzip path.
+    let tarBytes: Uint8Array;
+    const resp = await fetch('/core/texmf.tar');
+    if (resp.ok) {
+      tarBytes = new Uint8Array(await resp.arrayBuffer());
+    } else {
+      // Fallback for static hosts that don't pre-compress.
+      const fallback = await fetch('/core/texmf.tar.gz');
+      if (!fallback.ok) throw new Error(`TDS bundle: HTTP ${fallback.status}`);
+      const compressed = new Uint8Array(await fallback.arrayBuffer());
+      const ds = new DecompressionStream('gzip');
+      const stream = new Blob([compressed.buffer as ArrayBuffer]).stream().pipeThrough(ds);
+      tarBytes = new Uint8Array(await new Response(stream).arrayBuffer());
+    }
     setStatus(`extracting TDS (${(tarBytes.length / 1024 / 1024).toFixed(1)} MB)...`);
     const entries = untar(tarBytes);
     let count = 0;
@@ -266,21 +276,8 @@ export function App() {
           {log()}
         </pre>
       </div>
-      <div style={{ flex: '1', 'border-left': '1px solid #ccc', background: '#f0f0f0' }}>
-        <Show
-          when={pdfUrl()}
-          fallback={
-            <div style={{ padding: '32px', color: '#999', 'text-align': 'center' }}>
-              No PDF yet
-            </div>
-          }
-        >
-          <iframe
-            src={pdfUrl()!}
-            style={{ width: '100%', height: '100%', border: 0 }}
-            title="compiled PDF"
-          />
-        </Show>
+      <div style={{ flex: '1', 'border-left': '1px solid #ccc' }}>
+        <PdfViewer pdfUrl={pdfUrl()} />
       </div>
     </div>
   );

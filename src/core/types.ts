@@ -43,6 +43,12 @@ export interface RunOptions {
   env?: Record<string, string>;
   /** Maximum wall-clock time before the engine is aborted, in ms. */
   timeoutMs?: number;
+  /**
+   * If true (default), the worker parses missing-file errors out of the .log
+   * after a failed compile, asks the VFS backends for those paths, writes
+   * them into MEMFS, and retries the compile once. Set false to disable.
+   */
+  lazyFetch?: boolean;
 }
 
 export interface RunResult {
@@ -55,6 +61,8 @@ export interface RunResult {
   log: string;
   /** Wall-clock duration of the engine invocation. */
   durationMs: number;
+  /** How many lazy-fetch retries the worker had to perform. */
+  lazyFetchRetries?: number;
 }
 
 export interface LogEntry {

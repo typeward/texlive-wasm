@@ -67,7 +67,7 @@ $(EXPAT_LIB): $(EXPAT_SRC)/.unpacked
 	  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 && \
 	  emcmake cmake $(EXPAT_SRC) \
 	    -DCMAKE_BUILD_TYPE=MinSizeRel \
-	    -DCMAKE_C_FLAGS="-Oz -D_GNU_SOURCE" \
+	    -DCMAKE_C_FLAGS="-Oz $(THREAD_CFLAGS) -D_GNU_SOURCE" \
 	    -DEXPAT_BUILD_DOCS=OFF \
 	    -DEXPAT_BUILD_EXAMPLES=OFF \
 	    -DEXPAT_BUILD_FUZZERS=OFF \
@@ -105,7 +105,7 @@ $(FREETYPE_LIB): $(FREETYPE_SRC)/.unpacked
 	    --host=wasm32-unknown-emscripten --build=x86_64-pc-linux-gnu \
 	    --disable-shared --enable-static \
 	    --without-zlib --without-bzip2 --without-png --without-harfbuzz --without-brotli \
-	    CFLAGS="-Oz" \
+	    CFLAGS="-Oz $(THREAD_CFLAGS)" \
 	    > configure.log 2>&1 \
 	  || (echo "==> [wasm-libs] freetype configure FAILED"; tail -30 configure.log; exit 1)
 	@cd $(FREETYPE_BUILD) && \
@@ -130,6 +130,11 @@ $(FONTCONFIG_SRC)/.unpacked: | source
 $(FONTCONFIG_LIB): $(FONTCONFIG_SRC)/.unpacked $(EXPAT_LIB) $(FREETYPE_LIB)
 	@echo "==> [wasm-libs] fontconfig configure + build"
 	@mkdir -p $(FONTCONFIG_BUILD)
+	@# fontconfig 2.15.0 ships an older config.sub that doesn't know
+	@# wasm32-emscripten. Use the newer one from the TL source tree.
+	@if [ -f $(TL_SOURCE)/build-aux/config.sub ]; then \
+	  cp $(TL_SOURCE)/build-aux/config.sub $(FONTCONFIG_SRC)/config.sub; \
+	fi
 	@cd $(FONTCONFIG_BUILD) && \
 	  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 && \
 	  PKG_CONFIG_LIBDIR=/dev/null \
@@ -141,14 +146,21 @@ $(FONTCONFIG_LIB): $(FONTCONFIG_SRC)/.unpacked $(EXPAT_LIB) $(FREETYPE_LIB)
 	    --with-expat-lib=$(EXPAT_BUILD) \
 	    FREETYPE_CFLAGS="-I$(FREETYPE_INCLUDE)" \
 	    FREETYPE_LIBS="$(FREETYPE_LIB)" \
-	    CFLAGS="-Oz -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion" \
-	    CXXFLAGS="-Oz -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion" \
+	    CFLAGS="-Oz $(THREAD_CFLAGS) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion" \
+	    CXXFLAGS="-Oz $(THREAD_CFLAGS) -D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion" \
 	    ac_cv_func_random_r=no \
 	    ac_cv_func_srandom_r=no \
 	    ac_cv_func_initstate_r=no \
 	    > configure.log 2>&1 \
 	  || (echo "==> [wasm-libs] fontconfig configure FAILED"; tail -40 configure.log; exit 1)
 	@echo "==> [wasm-libs] fontconfig: building libfontconfig.la only (skip tools)"
+	@cd $(FONTCONFIG_BUILD) && \
+	  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 && \
+	  emmake $(MAKE) -j1 -C src fcalias.h fcaliastail.h fcftalias.h fcftaliastail.h fcstdint.h fcobjshash.h \
+	    > make-headers.log 2>&1 \
+	  || (echo "==> [wasm-libs] fontconfig header-gen FAILED"; tail -40 make-headers.log; exit 1); \
+	  emmake $(MAKE) -j1 -C fc-case fccase.h > make-fccase.log 2>&1 || true; \
+	  emmake $(MAKE) -j1 -C fc-lang fclang.h > make-fclang.log 2>&1 || true
 	@cd $(FONTCONFIG_BUILD) && \
 	  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 && \
 	  emmake $(MAKE) -j$(shell nproc 2>/dev/null || echo 2) -C src libfontconfig.la \

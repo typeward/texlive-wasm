@@ -1,10 +1,10 @@
 name: ci
 
+# Manual-only for now — this repo's main cost is the engine build, which
+# already has its own manual workflow (build-engines.yml). The library CI
+# (lint/typecheck/test/build) runs on demand from the Actions tab.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

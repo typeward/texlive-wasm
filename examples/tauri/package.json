@@ -1,0 +1,32 @@
+{
+  "name": "texlive-wasm-tauri-example",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Tauri 2.0 + SolidJS example showing texlive-wasm with TauriFS-backed TDS",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview --port 4173",
+    "predev": "node ../../scripts/ensure-assets.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "node ../../scripts/ensure-assets.mjs && tauri dev",
+    "tauri:build": "node ../../scripts/ensure-assets.mjs && tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
+    "comlink": "^4.4.2",
+    "solid-js": "^1.9.0",
+    "texlive-wasm": "file:../.."
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vite-plugin-solid": "^2.10.0",
+    "vite-plugin-top-level-await": "^1.4.4",
+    "vite-plugin-wasm": "^3.3.0"
+  }
+}

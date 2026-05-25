@@ -1,0 +1,19 @@
+[package]
+name = "texlive-wasm-tauri-example"
+version = "0.0.0"
+edition = "2021"
+description = "Tauri example for texlive-wasm"
+license = "MIT"
+
+[lib]
+name = "texlive_wasm_tauri_example_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

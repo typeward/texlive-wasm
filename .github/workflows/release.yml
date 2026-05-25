@@ -1,0 +1,108 @@
+name: release
+
+# Tag-driven release: builds every engine via the docker toolchain, packs
+# the artifacts into per-engine tar.gz files (scripts/pack-release.mjs),
+# and attaches them to the GitHub Release for the pushed tag.
+#
+# Trigger:
+#   git tag v0.1.0 && git push --tags
+# Or manually from the Actions tab; pick an existing tag.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex]
+        target: [emscripten]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build toolchain image (cached)
+        run: |
+          docker buildx build \
+            --cache-from=type=gha \
+            --cache-to=type=gha,mode=max \
+            --tag texlive-wasm-builder:ci \
+            --load \
+            engine/
+
+      - name: build ${{ matrix.engine }}-${{ matrix.target }}
+        run: |
+          docker run --rm \
+            -v "$PWD":/workspace -w /workspace/engine \
+            texlive-wasm-builder:ci \
+            make -j$(nproc) ${{ matrix.engine }}-${{ matrix.target }}
+
+      - name: upload engine artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.engine }}-${{ matrix.target }}
+          path: engine-artifacts/${{ matrix.engine }}/${{ matrix.target }}/
+          retention-days: 7
+
+  pack-and-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: download all engine artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: engine-artifacts-staging/
+
+      - name: stage engine-artifacts/ tree
+        run: |
+          mkdir -p engine-artifacts
+          for dir in engine-artifacts-staging/*/; do
+            name=$(basename "$dir")            # e.g. pdflatex-emscripten
+            engine=${name%-*}
+            target=${name##*-}
+            mkdir -p "engine-artifacts/$engine/$target"
+            cp -r "$dir"/* "engine-artifacts/$engine/$target/"
+          done
+          ls -R engine-artifacts/ | head -40
+
+      - name: pack release tarballs
+        run: |
+          TAG=${GITHUB_REF_NAME:-${{ inputs.tag }}}
+          node scripts/pack-release.mjs --version "$TAG"
+          ls -la release/
+          cat release/checksums.json
+
+      - name: upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            release/*.tar.gz
+            release/*.dat.gz
+            release/checksums.json
+          fail_on_unmatched_files: true
+          generate_release_notes: true

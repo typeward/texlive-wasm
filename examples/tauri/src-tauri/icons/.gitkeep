@@ -1,0 +1,4 @@
+# Placeholder. Generate real icons with:
+#   cd examples/tauri && npx tauri icon path/to/source.png
+# before running `npm run tauri:build`. `npm run tauri:dev` works without
+# icons.

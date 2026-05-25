@@ -1,6 +1,6 @@
 {
   "name": "texlive-wasm",
-  "version": "0.0.0",
+  "version": "0.1.0-alpha.0",
   "description": "TeX Live in WebAssembly — pdflatex, xelatex, lualatex in the browser and on the edge. Offline-first, Tauri-friendly.",
   "license": "MIT",
   "type": "module",
@@ -31,7 +31,6 @@
   },
   "files": [
     "dist/",
-    "engine-artifacts/",
     "scripts/cli.cjs",
     "README.md",
     "LICENSE"
@@ -50,7 +49,11 @@
     "engines:build": "make -C engine all",
     "engines:clean": "make -C engine clean",
     "manifest:build": "tsx scripts/build-manifest.ts",
-    "bundle:build": "tsx scripts/build-bundle.ts"
+    "bundle:build": "tsx scripts/build-bundle.ts",
+    "release:pack": "node scripts/pack-release.mjs",
+    "tauri": "npm --prefix examples/tauri run tauri --",
+    "tauri:dev": "npm --prefix examples/tauri run tauri:dev",
+    "tauri:build": "npm --prefix examples/tauri run tauri:build"
   },
   "keywords": [
     "latex",

@@ -1,57 +1,73 @@
-# demo/
+# demo/ — the showcase site
 
-SolidJS + Vite web demo for `texlive-wasm`. It drives `pdflatex.wasm`
-directly (no worker wrapper) and renders the result with pdf.js.
+SolidJS + Vite app deployed to **https://typeward.github.io/texlive-wasm/**.
+It is the reference consumer of the `texlive-wasm` npm API: every compile
+goes through `latexmk()` / `createEngine()` with one Web Worker per engine
+(see `src/engine-manager.ts`) — no hand-rolled Emscripten driving.
 
-## Prerequisites
+Tabs demonstrate the full tour: live pdflatex editor, the XeLaTeX →
+xdvipdfmx two-worker pipeline, LuaLaTeX with `\directlua`, bibliography via
+BibTeXu, makeindex, multi-pass rerun, SyncTeX parsing, a sample gallery, and
+an architecture page.
 
-The demo serves engine artifacts from the repo-root `engine-artifacts/`
-tree at `/core/*`. Stage them first, from the repo root:
+## Runtime assets
 
-```bash
-# either build them (Docker required)
-npm run engines:build
+The app fetches everything from `core/` next to `index.html`:
 
-# or download a published release
-npx texlive-wasm download-assets ./engine-artifacts
-
-# then fetch + pack the TDS slice the demo compiles against
-bash scripts/fetch-tds.sh
-node scripts/pack-tds.mjs        # → engine-artifacts/texmf.tar.{gz,br}
 ```
+core/
+├── <engine>/emscripten/<engine>.{js,wasm}   # per engine, lazy
+├── texmf.tar.gz                             # TeX tree incl. rebuilt .fmt files (~28 MB)
+└── icudt78l.dat                             # ICU data (xelatex + bibtexu only, ~21 MB)
+```
+
+- **Dev / preview:** the vite middleware serves the repo-root
+  `engine-artifacts/` at `/core/*`. Stage it once, from the repo root:
+
+  ```bash
+  npx texlive-wasm download-assets ./engine-artifacts   # or: npm run engines:build
+  bash scripts/fetch-tds.sh
+  node scripts/build-fmt.mjs
+  node scripts/build-xelatex-fmt.mjs
+  node scripts/build-lualatex-fmt.mjs
+  node scripts/pack-tds.mjs
+  ```
+
+- **Production:** `.github/workflows/deploy-site.yml` does the same on CI
+  (release assets + cached TDS) and copies the files into `dist/core/`
+  after `vite build`.
 
 ## Run
 
 ```bash
+npm run build            # repo root — the demo consumes the library via file:..
 cd demo
 npm install
-npm run dev
-# → http://localhost:1420
+npm run dev              # → http://localhost:1420
 ```
 
-Vite serves with `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: require-corp` so SharedArrayBuffer-based
-pthreads work for the engine. `npm run preview` applies the same headers
-and middleware.
+## Cross-origin isolation
 
-## Using texlive-wasm inside a Tauri app
+The engines are threaded (`-pthread -sSHARED_MEMORY=1`), so the page must be
+cross-origin isolated for SharedArrayBuffer to exist:
 
-See [`../examples/tauri/`](../examples/tauri/) for a complete, working
-Tauri 2.0 + SolidJS example (bundled resources, `TauriFS` backend,
-COOP/COEP headers via `app.security.headers`). The short version:
+- `vite dev` / `vite preview` send the COOP/COEP headers directly
+  (`vite.config.ts`).
+- GitHub Pages cannot send headers, so `public/coi-serviceworker.js`
+  (vendored from [gzuidhof/coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker),
+  MIT) injects them via a service worker — one automatic reload on the first
+  visit, a no-op everywhere the headers are already present.
 
-```ts
-import { createEngine } from 'texlive-wasm';
-import { withTauriFs } from 'texlive-wasm/tauri';
-import { BaseDirectory } from '@tauri-apps/plugin-fs';
+## Previewing the production build locally
 
-const engine = await withTauriFs(
-  (vfs) => createEngine('pdflatex', { vfs, enginePath: '/texlive-wasm/pdflatex/emscripten/pdflatex.wasm' }),
-  { texmfRoot: 'texlive-wasm/texmf', baseDir: BaseDirectory.Resource },
-);
+```bash
+npm run build
+# stage assets exactly like the deploy workflow does:
+for e in pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex; do
+  mkdir -p dist/core/$e/emscripten
+  cp ../engine-artifacts/$e/emscripten/$e.{js,wasm} dist/core/$e/emscripten/
+done
+cp ../engine-artifacts/texmf.tar.gz ../engine-artifacts/icudt78l.dat dist/core/
+npm run preview          # headers path (SW no-ops)
+npx serve dist           # no-headers path (exercises the service worker)
 ```
-
-## Status
-
-Working end-to-end: type LaTeX, click Compile, get a PDF rendered by
-pdf.js — everything runs client-side.

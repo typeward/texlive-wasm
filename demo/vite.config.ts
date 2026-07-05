@@ -78,6 +78,9 @@ function serveEngineArtifacts(): Plugin {
 }
 
 export default defineConfig({
+  // Relative base: the site deploys under https://<owner>.github.io/<repo>/
+  // and this is a single-page hash-tab app, so './' works everywhere.
+  base: './',
   plugins: [solid(), wasm(), topLevelAwait(), serveEngineArtifacts()],
   clearScreen: false,
   server: {

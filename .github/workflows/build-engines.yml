@@ -26,6 +26,26 @@ permissions:
   contents: read
 
 jobs:
+  # GitHub rejects the `matrix` context in job-level `if:` expressions, so
+  # input-driven selection happens by generating the matrix itself.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      engines: ${{ steps.plan.outputs.engines }}
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - name: expand inputs into matrix JSON
+        id: plan
+        env:
+          # On tag pushes the inputs context is empty — fall back to everything.
+          ENGINES: ${{ inputs.engines || 'pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex' }}
+          TARGETS: ${{ inputs.targets || 'emscripten wasi' }}
+        run: |
+          {
+            echo "engines=$(printf '%s\n' $ENGINES | jq -Rcn '[inputs]')"
+            echo "targets=$(printf '%s\n' $TARGETS | jq -Rcn '[inputs]')"
+          } >> "$GITHUB_OUTPUT"
+
   builder-image:
     runs-on: ubuntu-latest
     steps:
@@ -47,18 +67,13 @@ jobs:
             engine/
 
   build:
-    needs: builder-image
+    needs: [plan, builder-image]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        engine: [pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex]
-        target: [emscripten, wasi]
-    # On dispatch, honor the engines/targets inputs; tag pushes build everything.
-    if: >-
-      ${{ github.event_name != 'workflow_dispatch'
-          || (contains(format(' {0} ', github.event.inputs.engines), format(' {0} ', matrix.engine))
-              && contains(format(' {0} ', github.event.inputs.targets), format(' {0} ', matrix.target))) }}
+        engine: ${{ fromJSON(needs.plan.outputs.engines) }}
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
     steps:
       - uses: actions/checkout@v4
         with:

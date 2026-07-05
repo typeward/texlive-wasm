@@ -37,17 +37,17 @@ jobs:
         engine: [pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex]
         target: [emscripten]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # On manual dispatch, build the tag's code — not the default branch.
           ref: ${{ github.event.inputs.tag || github.ref }}
           submodules: recursive
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Exposes ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL to run steps so
       # `docker buildx --cache-from/--cache-to=type=gha` can authenticate.
-      - uses: crazy-max/ghaction-github-runtime@v3
+      - uses: crazy-max/ghaction-github-runtime@v4
 
       - name: build toolchain image (cached)
         run: |
@@ -77,7 +77,7 @@ jobs:
           ls -la staged/
 
       - name: upload engine artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.engine }}-${{ matrix.target }}
           path: staged/
@@ -89,11 +89,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -101,7 +101,7 @@ jobs:
       - run: npm ci
 
       - name: download all engine artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: engine-artifacts-staging/
 
@@ -129,7 +129,7 @@ jobs:
           cat release/checksums.json
 
       - name: upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |

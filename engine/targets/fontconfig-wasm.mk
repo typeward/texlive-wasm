@@ -16,15 +16,27 @@
 
 WASM_LIBS_DIR := $(BUILD_DIR)/wasm-libs
 
+# Tarballs are fetched by scripts/fetch-verify.sh: first mirror that works
+# AND matches the pinned sha256 wins. freedesktop.org answers plain curl
+# with HTTP 418 (anti-bot), hence the mirrors and the browser-ish UA there.
+
 EXPAT_VERSION := 2.6.4
-EXPAT_TARBALL_URL := https://github.com/libexpat/libexpat/releases/download/R_2_6_4/expat-$(EXPAT_VERSION).tar.gz
+EXPAT_SHA256 := fd03b7172b3bd7427a3e7a812063f74754f24542429b634e0db6511b53fb2278
+EXPAT_URLS := \
+	https://github.com/libexpat/libexpat/releases/download/R_2_6_4/expat-$(EXPAT_VERSION).tar.gz
 EXPAT_SRC := $(WASM_LIBS_DIR)/expat-$(EXPAT_VERSION)
 EXPAT_BUILD := $(WASM_LIBS_DIR)/expat-build
 EXPAT_LIB := $(EXPAT_BUILD)/libexpat.a
 EXPAT_INCLUDE := $(EXPAT_SRC)/lib
 
 FONTCONFIG_VERSION := 2.15.0
-FONTCONFIG_TARBALL_URL := https://www.freedesktop.org/software/fontconfig/release/fontconfig-$(FONTCONFIG_VERSION).tar.gz
+# .tar.xz (not .gz): the Debian orig tarball and the BLFS mirror carry the
+# upstream xz archive, and both serve these exact bytes.
+FONTCONFIG_SHA256 := 63a0658d0e06e0fa886106452b58ef04f21f58202ea02a94c39de0d3335d7c0e
+FONTCONFIG_URLS := \
+	https://www.freedesktop.org/software/fontconfig/release/fontconfig-$(FONTCONFIG_VERSION).tar.xz \
+	https://deb.debian.org/debian/pool/main/f/fontconfig/fontconfig_$(FONTCONFIG_VERSION).orig.tar.xz \
+	https://ftp.osuosl.org/pub/blfs/conglomeration/fontconfig/fontconfig-$(FONTCONFIG_VERSION).tar.xz
 FONTCONFIG_SRC := $(WASM_LIBS_DIR)/fontconfig-$(FONTCONFIG_VERSION)
 FONTCONFIG_BUILD := $(WASM_LIBS_DIR)/fontconfig-build
 FONTCONFIG_LIB := $(FONTCONFIG_BUILD)/src/.libs/libfontconfig.a
@@ -36,11 +48,16 @@ FONTCONFIG_INCLUDE := $(FONTCONFIG_BUILD)/include
 # To avoid an inter-engine coupling, we instead build freetype2 in the
 # wasm-libs/ dir too (small, ~3 min). Cleaner separation.
 FREETYPE_VERSION := 2.13.3
-FREETYPE_TARBALL_URL := https://download.savannah.gnu.org/releases/freetype/freetype-$(FREETYPE_VERSION).tar.gz
+FREETYPE_SHA256 := 5c3a8e78f7b24c20b25b54ee575d6daa40007a5f4eea2845861c3409b3021747
+FREETYPE_URLS := \
+	https://download.savannah.gnu.org/releases/freetype/freetype-$(FREETYPE_VERSION).tar.gz \
+	https://download-mirror.savannah.gnu.org/releases/freetype/freetype-$(FREETYPE_VERSION).tar.gz
 FREETYPE_SRC := $(WASM_LIBS_DIR)/freetype-$(FREETYPE_VERSION)
 FREETYPE_BUILD := $(WASM_LIBS_DIR)/freetype-build
 FREETYPE_LIB := $(FREETYPE_BUILD)/.libs/libfreetype.a
 FREETYPE_INCLUDE := $(FREETYPE_SRC)/include
+
+FETCH_VERIFY := bash $(ROOT)/scripts/fetch-verify.sh
 
 WASM_LIBS_DONE := $(WASM_LIBS_DIR)/.built
 
@@ -54,8 +71,8 @@ $(EXPAT_SRC)/.unpacked: | source
 	@if [ ! -d $(EXPAT_SRC) ]; then \
 	  echo "==> [wasm-libs] downloading expat $(EXPAT_VERSION)"; \
 	  cd $(WASM_LIBS_DIR) && \
-	  curl -fsSL -o expat.tar.gz $(EXPAT_TARBALL_URL) && \
-	  tar -xzf expat.tar.gz && \
+	  $(FETCH_VERIFY) expat.tar.gz $(EXPAT_SHA256) $(EXPAT_URLS) && \
+	  tar -xf expat.tar.gz && \
 	  rm expat.tar.gz; \
 	fi
 	@touch $@
@@ -90,8 +107,8 @@ $(FREETYPE_SRC)/.unpacked: | source
 	@if [ ! -d $(FREETYPE_SRC) ]; then \
 	  echo "==> [wasm-libs] downloading freetype $(FREETYPE_VERSION)"; \
 	  cd $(WASM_LIBS_DIR) && \
-	  curl -fsSL -o freetype.tar.gz $(FREETYPE_TARBALL_URL) && \
-	  tar -xzf freetype.tar.gz && \
+	  $(FETCH_VERIFY) freetype.tar.gz $(FREETYPE_SHA256) $(FREETYPE_URLS) && \
+	  tar -xf freetype.tar.gz && \
 	  rm freetype.tar.gz; \
 	fi
 	@touch $@
@@ -121,9 +138,9 @@ $(FONTCONFIG_SRC)/.unpacked: | source
 	@if [ ! -d $(FONTCONFIG_SRC) ]; then \
 	  echo "==> [wasm-libs] downloading fontconfig $(FONTCONFIG_VERSION)"; \
 	  cd $(WASM_LIBS_DIR) && \
-	  curl -fsSL -o fontconfig.tar.gz $(FONTCONFIG_TARBALL_URL) && \
-	  tar -xzf fontconfig.tar.gz && \
-	  rm fontconfig.tar.gz; \
+	  $(FETCH_VERIFY) fontconfig.tar.xz $(FONTCONFIG_SHA256) $(FONTCONFIG_URLS) && \
+	  tar -xf fontconfig.tar.xz && \
+	  rm fontconfig.tar.xz; \
 	fi
 	@touch $@
 

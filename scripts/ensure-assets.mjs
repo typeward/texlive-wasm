@@ -5,9 +5,8 @@
  *
  * Preference order (cheapest first):
  *   1. Already exists at the target path → no-op.
- *   2. Local `engine-artifacts/` tree (developer build)   → symlink/copy in.
- *   3. Local `release/*.tar.gz` (just-packed)             → extract.
- *   4. GitHub release for the current package.json tag    → download + extract
+ *   2. Local `engine-artifacts/` tree with built engines  → copy in.
+ *   3. GitHub release for the current package.json tag    → download + extract
  *      (delegated to scripts/cli.cjs download-assets).
  */
 
@@ -40,7 +39,9 @@ function looksPopulated(dir) {
 
 function copyEngineArtifacts() {
   const src = resolve(ROOT, 'engine-artifacts');
-  if (!existsSync(src)) return false;
+  // An existing-but-engineless tree (e.g. only icudt78l.dat) must fall
+  // through to the release download instead of "succeeding".
+  if (!looksPopulated(src)) return false;
   mkdirSync(TARGET, { recursive: true });
   // Mirror engine-artifacts/<engine>/<target>/ under TARGET/<engine>/<target>/.
   for (const engine of readdirSync(src)) {

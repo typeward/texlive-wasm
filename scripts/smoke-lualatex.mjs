@@ -4,9 +4,10 @@
  * lualatex (luahbtex). Produces hello-from-wasm-lualatex.pdf in cwd.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-const REPO_ROOT = new URL('..', import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const TEXMF = join(REPO_ROOT, 'engine-artifacts/texmf');
 
 function walk(FS, absDir, mfsDir) {

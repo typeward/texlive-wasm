@@ -12,10 +12,13 @@ import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-// Pick a Node binary that can run wasi-compile (Wasm EH support landed in
-// Node 22). Falls back to the running Node for non-wasi smokes.
-const NODE_22 = '/tmp/node-v22.13.0-linux-x64/bin/node';
-const HAS_NODE22 = existsSync(NODE_22);
+// The wasi smoke needs Wasm EH support, which landed in Node 22. Use the
+// running Node when it's new enough; otherwise fall back to a side-installed
+// binary (CI convenience) before skipping.
+const NODE_22_FALLBACK = '/tmp/node-v22.13.0-linux-x64/bin/node';
+const runningMajor = Number(process.versions.node.split('.')[0]);
+const NODE_FOR_WASI =
+  runningMajor >= 22 ? process.execPath : existsSync(NODE_22_FALLBACK) ? NODE_22_FALLBACK : null;
 
 const SMOKES = [
   ['pdflatex',  'smoke-pdflatex.mjs', false],
@@ -28,13 +31,13 @@ const SMOKES = [
 
 const results = [];
 for (const [name, script, needsNode22] of SMOKES) {
-  if (needsNode22 && !HAS_NODE22) {
-    console.log(`[SKIP] ${name.padEnd(10)} (needs Node 22+ for wasm EH; install via the project README to run)`);
+  if (needsNode22 && !NODE_FOR_WASI) {
+    console.log(`[SKIP] ${name.padEnd(10)} (needs Node 22+ for wasm EH; current is ${process.versions.node})`);
     continue;
   }
   const t0 = Date.now();
   const path = join(HERE, script);
-  const bin = needsNode22 ? NODE_22 : process.execPath;
+  const bin = needsNode22 ? NODE_FOR_WASI : process.execPath;
   const r = spawnSync(bin, [path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const ms = Date.now() - t0;
   const ok = r.status === 0;

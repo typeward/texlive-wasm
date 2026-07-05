@@ -3,9 +3,10 @@
  * build-xelatex-fmt.mjs — build xelatex.fmt using our wasm xetex.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const REPO_ROOT = new URL('..', import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const TEXMF = join(REPO_ROOT, 'engine-artifacts/texmf');
 const XELATEX_JS = join(REPO_ROOT, 'engine-artifacts/xelatex/emscripten/xelatex.js');
 const ICU_DATA = join(REPO_ROOT, 'engine-artifacts/icudt78l.dat');

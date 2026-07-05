@@ -5,11 +5,12 @@
  * via the preopens map; kpathsea reads them through normal file I/O.
  */
 import { readFileSync, writeFileSync, mkdirSync, rmSync, copyFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WASI } from 'node:wasi';
 
-const REPO = new URL('..', import.meta.url).pathname;
+const REPO = fileURLToPath(new URL('..', import.meta.url));
 const WASM = join(REPO, 'engine/build/pdflatex/wasi/pdflatex.wasm');
 const TEXMF = join(REPO, 'engine-artifacts/texmf');
 

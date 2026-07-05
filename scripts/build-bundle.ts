@@ -64,18 +64,23 @@ async function main(): Promise<void> {
 }
 
 async function buildTarBrotli(tdsRoot: string, paths: string[], outPath: string): Promise<void> {
-  // We shell out to `tar` because Node's built-in tar package is heavyweight
-  // and not in the std lib. Paths arrive via -T (file-list) for portability.
-  const fileList = paths.join('\n');
-  const tar = spawn('tar', ['-c', '-C', tdsRoot, '-T', '-', '--null', '--no-recursion'], {
+  // We shell out to `tar` because Node's std lib has no tar writer. GNU tar
+  // requires --null/--no-recursion BEFORE -T for them to apply to the list.
+  const tar = spawn('tar', ['-c', '--null', '--no-recursion', '-C', tdsRoot, '-T', '-'], {
     stdio: ['pipe', 'pipe', 'inherit'],
   });
 
   // Write null-terminated path list.
-  const nulList = paths.map((p) => p).join('\0') + '\0';
-  void fileList; // unused; we use null-terminated list
+  const nulList = paths.join('\0') + '\0';
   tar.stdin.write(nulList);
   tar.stdin.end();
+
+  const tarExited = new Promise<void>((res, rej) => {
+    tar.on('error', rej);
+    tar.on('close', (code) =>
+      code === 0 ? res() : rej(new Error(`tar exited with code ${code} for ${outPath}`)),
+    );
+  });
 
   const brotli = createBrotliCompress({
     params: {
@@ -84,7 +89,9 @@ async function buildTarBrotli(tdsRoot: string, paths: string[], outPath: string)
     },
   });
 
-  await pipeline(tar.stdout, brotli, createWriteStream(outPath));
+  // A non-zero tar exit must fail the build — a truncated bundle written
+  // with exit code 0 is worse than no bundle.
+  await Promise.all([pipeline(tar.stdout, brotli, createWriteStream(outPath)), tarExited]);
 }
 
 // Round-trip sanity helper: returns the SHA-256 of a file path. Not invoked by

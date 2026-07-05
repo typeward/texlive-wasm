@@ -3,9 +3,10 @@
  * smoke-xelatex.mjs — end-to-end test: xelatex → .xdv → (xdvipdfmx) → .pdf
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-const REPO_ROOT = new URL('..', import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const TEXMF = join(REPO_ROOT, 'engine-artifacts/texmf');
 const ICU_DATA = join(REPO_ROOT, 'engine-artifacts/icudt78l.dat');
 
@@ -136,4 +137,7 @@ if (dvi.FS.analyzePath('/project/hello.pdf').exists) {
   const pdf = dvi.FS.readFile('/project/hello.pdf');
   writeFileSync(join(REPO_ROOT, 'hello-from-wasm-xelatex.pdf'), pdf);
   console.log(`✓ PDF: ${pdf.length} bytes → hello-from-wasm-xelatex.pdf`);
+} else {
+  console.error('FAIL: xdvipdfmx produced no PDF');
+  process.exit(1);
 }

@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from 'node:url';
 import { join } from "node:path";
 
-const REPO = new URL("..", import.meta.url).pathname;
+const REPO = fileURLToPath(new URL("..", import.meta.url));
 const m = await import(join(REPO, "engine-artifacts/pdflatex/emscripten/pdflatex.js"));
 
 function walk(FS, absDir, mfsDir) {
@@ -55,15 +56,19 @@ if (Module.FS.analyzePath("/project/hello.pdf").exists) {
   writeFileSync(join(REPO, "hello-from-wasm.pdf"), pdf);
   console.log("PDF:", pdf.length, "bytes");
   process.exit(0);
-} else if (Module.FS.analyzePath("/project/hello.log").exists) {
-  const log = new TextDecoder().decode(Module.FS.readFile("/project/hello.log"));
-  // Look for first error
-  const lines = log.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    if (/error|Error|Warning|! /.test(lines[i])) {
-      console.log("--- log around error line", i, "---");
-      console.log(lines.slice(Math.max(0, i-3), Math.min(lines.length, i+15)).join("\n"));
-      break;
+} else {
+  if (Module.FS.analyzePath("/project/hello.log").exists) {
+    const log = new TextDecoder().decode(Module.FS.readFile("/project/hello.log"));
+    // Look for first error
+    const lines = log.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (/error|Error|Warning|! /.test(lines[i])) {
+        console.log("--- log around error line", i, "---");
+        console.log(lines.slice(Math.max(0, i-3), Math.min(lines.length, i+15)).join("\n"));
+        break;
+      }
     }
   }
+  console.error("FAIL: no PDF produced");
+  process.exit(1);
 }

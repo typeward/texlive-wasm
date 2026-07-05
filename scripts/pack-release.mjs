@@ -24,6 +24,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import {
   mkdir,
@@ -39,7 +40,7 @@ import { createGzip } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 
-const ROOT = resolve(new URL('..', import.meta.url).pathname);
+const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 const ENGINES = [
   'pdflatex',
@@ -82,6 +83,8 @@ async function main() {
       if (!existsSync(engineDir)) continue;
       const files = await collectFiles(engineDir);
       if (files.length === 0) continue;
+      // LICENSE promises attribution inside every engine artifact bundle.
+      files.push({ rel: 'NOTICE', content: Buffer.from(noticeText(engine), 'utf8') });
       const archive = join(outDir, `${engine}-${target}.tar.gz`);
       await writeTarGz(archive, files, `${engine}/${target}/`);
       assets[`${engine}-${target}.tar.gz`] = await hashAndSize(archive);
@@ -158,12 +161,24 @@ async function gzipFile(srcPath, dstPath) {
   await pipeline(createReadStream(srcPath), createGzip({ level: 9 }), createWriteStream(dstPath));
 }
 
+function noticeText(component) {
+  return (
+    `${component} — compiled to WebAssembly from TeX Live sources\n` +
+    `(https://tug.org/texlive/, github.com/TeX-Live/texlive-source).\n\n` +
+    `The binary in this archive is a derived work of TeX Live and retains\n` +
+    `its upstream licenses (predominantly LPPL, GPL family, and\n` +
+    `engine-specific terms). See LICENSE.TL in the TeX Live source tree\n` +
+    `for the full per-component breakdown. The texlive-wasm wrapper\n` +
+    `library and build scripts are MIT-licensed.\n`
+  );
+}
+
 async function writeTarGz(dstPath, files, prefix) {
   await mkdir(dirname(dstPath), { recursive: true });
   const { createWriteStream } = await import('node:fs');
   async function* generate() {
     for (const f of files) {
-      const data = await readFile(f.abs);
+      const data = f.content ?? (await readFile(f.abs));
       yield ustarHeader(prefix + f.rel.replaceAll('\\', '/'), data.length);
       yield data;
       const pad = (512 - (data.length % 512)) % 512;
@@ -191,7 +206,7 @@ function ustarHeader(path, size) {
   let sum = 0;
   for (let i = 0; i < 512; i++) sum += buf[i];
   writeOctal(buf, 148, 7, sum);
-  buf[155] = 0;
+  buf[155] = 0x20; // checksum terminator is NUL + space per POSIX convention
   return buf;
 }
 

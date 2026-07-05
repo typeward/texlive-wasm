@@ -4,9 +4,10 @@
  * tikz, biblatex, IEEEtran, algorithm2e) actually compile.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-const REPO = new URL('..', import.meta.url).pathname;
+const REPO = fileURLToPath(new URL('..', import.meta.url));
 const TEXMF = join(REPO, 'engine-artifacts/texmf');
 
 function walk(FS, abs, mfs) {

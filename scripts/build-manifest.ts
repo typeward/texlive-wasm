@@ -25,6 +25,7 @@ import { createHash } from 'node:crypto';
 import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, relative, join, dirname } from 'node:path';
 import { parseArgs } from 'node:util';
+import { pathToFileURL } from 'node:url';
 
 interface ManifestEntry {
   sha256: string;
@@ -58,6 +59,10 @@ async function main(): Promise<void> {
   });
 
   const tdsRoot = resolve(values.tds!);
+  const rootStat = await stat(tdsRoot).catch(() => null);
+  if (!rootStat?.isDirectory()) {
+    throw new Error(`build-manifest: TDS root ${tdsRoot} does not exist — pass --tds <path>.`);
+  }
   const corePatterns = await readPatternList(values['core-list']!);
   const stripPatterns = await readPatternList(values['full-strip']!);
 
@@ -69,6 +74,11 @@ async function main(): Promise<void> {
     const tier = classify(rel, corePatterns, stripPatterns);
     const pkg = inferPackage(rel);
     files[rel] = { sha256, size: bytes.byteLength, tier, package: pkg };
+  }
+  if (Object.keys(files).length === 0) {
+    throw new Error(
+      `build-manifest: no files found under ${tdsRoot} — refusing to write an empty manifest.`,
+    );
   }
 
   const manifest: Manifest = {
@@ -127,7 +137,7 @@ async function readPatternList(path: string): Promise<string[]> {
   }
 }
 
-function classify(
+export function classify(
   rel: string,
   corePatterns: string[],
   stripPatterns: string[],
@@ -142,23 +152,26 @@ function matchesAny(path: string, patterns: string[]): boolean {
 }
 
 /**
- * Tiny glob matcher: supports `*` (no /), `**` (any), and literal segments.
+ * Tiny glob matcher: supports `*` (no /), `**` (any depth, including a
+ * trailing `dir/**` matching every file below dir), and literal segments.
  * Sufficient for the patterns we use; not a full POSIX glob.
  */
-function globMatch(pattern: string, path: string): boolean {
+export function globMatch(pattern: string, path: string): boolean {
   const re =
     '^' +
     pattern
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*\*\/?/g, '<<DOUBLE_STAR>>')
+      .replace(/\*\*$/, '<<ALL>>')
+      .replace(/\*\*\//g, '<<ANYDIRS>>')
       .replace(/\*/g, '[^/]*')
-      .replace(/<<DOUBLE_STAR>>/g, '(?:.*/)?') +
+      .replace(/<<ALL>>/, '.*')
+      .replace(/<<ANYDIRS>>/g, '(?:[^/]+/)*') +
     '$';
   return new RegExp(re).test(path);
 }
 
 /** Best-effort: a TDS path like tex/latex/geometry/geometry.sty → "geometry". */
-function inferPackage(rel: string): string | null {
+export function inferPackage(rel: string): string | null {
   const parts = rel.split('/');
   // tex/{latex,generic,plain}/<pkg>/<file>
   if (parts[0] === 'tex' && parts.length >= 4) return parts[2] ?? null;
@@ -171,7 +184,10 @@ function inferPackage(rel: string): string | null {
   return null;
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run when invoked as a script (tests import the helpers above).
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

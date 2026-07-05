@@ -12,9 +12,10 @@
  */
 
 import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const REPO_ROOT = new URL('..', import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const TEXMF = join(REPO_ROOT, 'engine-artifacts/texmf');
 const PDFLATEX_JS = join(REPO_ROOT, 'engine-artifacts/pdflatex/emscripten/pdflatex.js');
 

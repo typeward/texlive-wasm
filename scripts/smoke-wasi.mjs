@@ -8,10 +8,11 @@
  * need a populated TDS mounted via WASI preopens, which we can do later.
  */
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { WASI } from 'node:wasi';
 import { argv0 } from 'node:process';
 
-const WASM = new URL('../engine/build/pdflatex/wasi/pdflatex.wasm', import.meta.url).pathname;
+const WASM = fileURLToPath(new URL('../engine/build/pdflatex/wasi/pdflatex.wasm', import.meta.url));
 
 const wasi = new WASI({
   version: 'preview1',

@@ -30,6 +30,12 @@ for engine in "${ENGINES[@]}"; do
     echo "[skip] $src missing"
     continue
   fi
+  # Idempotency: a previous run leaves .br/.gz newer than the (already
+  # optimized) .wasm; a rebuilt .wasm invalidates them.
+  if [ "${src}.br" -nt "$src" ] && [ "${src}.gz" -nt "$src" ]; then
+    echo "[skip] $engine already optimized (outputs newer than input)"
+    continue
+  fi
   before=$(stat -c%s "$src")
   TOTAL_BEFORE=$((TOTAL_BEFORE + before))
 

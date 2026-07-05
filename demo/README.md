@@ -1,10 +1,29 @@
 # demo/
 
-SolidJS + Vite demo for `texlive-wasm`. Ready to drop into a Tauri 2.0 app.
+SolidJS + Vite web demo for `texlive-wasm`. It drives `pdflatex.wasm`
+directly (no worker wrapper) and renders the result with pdf.js.
 
-## Run as a plain web app
+## Prerequisites
+
+The demo serves engine artifacts from the repo-root `engine-artifacts/`
+tree at `/core/*`. Stage them first, from the repo root:
 
 ```bash
+# either build them (Docker required)
+npm run engines:build
+
+# or download a published release
+npx texlive-wasm download-assets ./engine-artifacts
+
+# then fetch + pack the TDS slice the demo compiles against
+bash scripts/fetch-tds.sh
+node scripts/pack-tds.mjs        # → engine-artifacts/texmf.tar.{gz,br}
+```
+
+## Run
+
+```bash
+cd demo
 npm install
 npm run dev
 # → http://localhost:1420
@@ -12,49 +31,27 @@ npm run dev
 
 Vite serves with `Cross-Origin-Opener-Policy: same-origin` and
 `Cross-Origin-Embedder-Policy: require-corp` so SharedArrayBuffer-based
-pthreads work for the engine workers.
+pthreads work for the engine. `npm run preview` applies the same headers
+and middleware.
 
-## Run inside Tauri
+## Using texlive-wasm inside a Tauri app
 
-This package doesn't ship a `src-tauri/` directory of its own — it's meant to
-be merged into an existing Tauri 2.0 + SolidJS project. Two steps:
+See [`../examples/tauri/`](../examples/tauri/) for a complete, working
+Tauri 2.0 + SolidJS example (bundled resources, `TauriFS` backend,
+COOP/COEP headers via `app.security.headers`). The short version:
 
-1. Add `texlive-wasm` and (optionally) `@tauri-apps/plugin-fs` to your app's
-   dependencies.
-2. In `src-tauri/tauri.conf.json`, set:
+```ts
+import { createEngine } from 'texlive-wasm';
+import { withTauriFs } from 'texlive-wasm/tauri';
+import { BaseDirectory } from '@tauri-apps/plugin-fs';
 
-   ```json
-   {
-     "app": {
-       "security": {
-         "headers": {
-           "Cross-Origin-Opener-Policy": "same-origin",
-           "Cross-Origin-Embedder-Policy": "require-corp"
-         }
-       }
-     }
-   }
-   ```
-
-3. For full offline use, copy `node_modules/texlive-wasm/dist/bundles/full-*.tar.br`
-   into `src-tauri/resources/` and unpack it on first launch (or use the helper
-   `npx texlive-wasm prepare-resources <path-to-resources/texmf>`).
-4. Wire the `TauriFS` backend:
-
-   ```ts
-   import { createEngine } from 'texlive-wasm';
-   import { withTauriFs } from 'texlive-wasm/tauri';
-   import { BaseDirectory } from '@tauri-apps/plugin-fs';
-
-   const engine = await withTauriFs(
-     await createEngine('xelatex', {
-       manifestUrl: '/texmf/tex-packages.json',
-     }),
-     { texmfRoot: 'texmf', baseDir: BaseDirectory.Resource },
-   );
-   ```
+const engine = await withTauriFs(
+  (vfs) => createEngine('pdflatex', { vfs, enginePath: '/texlive-wasm/pdflatex/emscripten/pdflatex.wasm' }),
+  { texmfRoot: 'texlive-wasm/texmf', baseDir: BaseDirectory.Resource },
+);
+```
 
 ## Status
 
-Phase 0 — the demo compiles and runs, but `compile()` returns an empty PDF
-until the Phase 1 `pdflatex.wasm` artifact lands.
+Working end-to-end: type LaTeX, click Compile, get a PDF rendered by
+pdf.js — everything runs client-side.

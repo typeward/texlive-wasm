@@ -91,6 +91,10 @@ export function App() {
   const [status, setStatus] = createSignal<string>('idle');
   const [busy, setBusy] = createSignal(false);
   let cachedEngine: EngineHandle | null = null;
+  // Emscripten captures print/printErr once at instantiation — a later
+  // `Module.print = ...` assignment is ignored. Route through a mutable sink
+  // bound at factory time instead.
+  let outputSink: (t: string) => void = () => {};
 
   async function loadEngine(): Promise<EngineHandle> {
     if (cachedEngine) return cachedEngine;
@@ -105,8 +109,8 @@ export function App() {
     const Module = await factory({
       noInitialRun: true,
       thisProgram: '/bin/pdflatex',
-      print: () => {},
-      printErr: () => {},
+      print: (t: string) => outputSink(t),
+      printErr: (t: string) => outputSink(t),
     });
 
     setStatus('loading TDS bundle (~18 MB brotli)...');
@@ -169,10 +173,7 @@ export function App() {
       Module.FS.chdir('/project');
 
       let stdout = '';
-      Module.print = (t: string) => {
-        stdout += t + '\n';
-      };
-      Module.printErr = (t: string) => {
+      outputSink = (t: string) => {
         stdout += t + '\n';
       };
 

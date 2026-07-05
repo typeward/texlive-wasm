@@ -21,6 +21,12 @@ export default defineConfig({
     },
     watch: { ignored: ['**/src-tauri/**'] },
   },
+  preview: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     target: 'es2022',

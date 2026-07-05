@@ -20,7 +20,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; frame-src 'self' blob:; object-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost blob: data:",
+      "headers": {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp"
+      }
     }
   },
   "bundle": {
@@ -30,16 +34,10 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../../public/texlive-wasm/*"
-    ]
-  },
-  "plugins": {
-    "fs": {
-      "scope": ["$RESOURCE/texlive-wasm/**"]
+    "resources": {
+      "../public/texlive-wasm": "texlive-wasm"
     }
   }
 }

@@ -10,7 +10,8 @@ slice of TDS) is shipped as a Tauri resource and read through the
 From the repo root:
 
 ```bash
-npm install              # install the wrapper library
+npm install              # install the wrapper library's deps
+npm run build            # build dist/ — the example depends on it via file:../..
 npm --prefix examples/tauri install
 npm run tauri:dev        # delegates to `tauri dev` inside this directory
 ```
@@ -35,7 +36,8 @@ artifacts into `public/texlive-wasm/` from one of:
 
 ## Production bundle
 
-`npm run tauri:build` requires real app icons. Generate them once:
+Placeholder icons ship in `src-tauri/icons/`; replace them with real ones
+for anything user-facing:
 
 ```bash
 cd examples/tauri
@@ -43,4 +45,5 @@ npx tauri icon path/to/source.png
 ```
 
 Then run `npm run tauri:build`. The resulting installer/AppImage ships
-the engine + TDS as application resources.
+the engine + TDS as application resources (bundled from
+`public/texlive-wasm/` to `$RESOURCE/texlive-wasm/`).

@@ -1,10 +1,13 @@
 /**
  * Worker entry point. One Comlink-exposed instance per engine.
  *
- * Loads the engine .wasm + JS glue (Emscripten MODULARIZE=1 EXPORT_ES6=1),
- * drains VFS backends into MEMFS, optionally loads ICU data for ICU-using
- * engines, then exposes `run({ args, files })` that calls pdflatex/xelatex/
- * etc. and returns the outputs.
+ * The worker caches the engine's ES-module factory, the ICU data bytes and
+ * the full TDS file map, and builds a FRESH Emscripten module instance for
+ * every run(): TeX engines are not reentrant — a second callMain() on the
+ * same instance misbehaves (static C state, getopt position and kpathsea
+ * caches survive the first run; observed as wrong exit codes and wasm
+ * "index out of bounds" traps). Instance setup costs an instantiation plus
+ * repopulating MEMFS from the cached map, which is what correctness costs.
  *
  * Compile-time mandates we worked around:
  * - Emscripten ENV must be set BEFORE init; we sidestep by using TL's
@@ -96,8 +99,8 @@ type ModuleFactory = (
 const TEX_ENGINES: ReadonlySet<EngineId> = new Set(['pdflatex', 'xelatex', 'lualatex']);
 
 /**
- * Per-engine default `-fmt` path. Filled in once the BundleFS has populated
- * MEMFS; consumers can override via RunOptions.env.
+ * Per-engine default `-fmt` path. Present once the TDS map has been
+ * populated into MEMFS; consumers can override via RunOptions.env.
  */
 const FMT_PATH: Partial<Record<EngineId, string>> = {
   pdflatex: '/texmf-dist/web2c/pdftex/pdflatex.fmt',
@@ -109,7 +112,10 @@ class WorkerImpl implements WorkerApi {
   private engineId: EngineId | null = null;
   private config: EngineConfig | null = null;
   private backends: VfsBackend[] = [];
-  private module: EmscriptenModule | null = null;
+  private glueFactory: ModuleFactory | null = null;
+  private icuData: Uint8Array | null = null;
+  /** TDS-relative path → bytes; repopulated into every fresh instance. */
+  private tdsFiles = new Map<string, Uint8Array>();
   // Stable sinks bound at module-factory time. Emscripten's glue captures
   // print/printErr into internal out/err ONCE at instantiation — reassigning
   // module.print afterwards has no effect, so the closures must stay fixed
@@ -136,13 +142,40 @@ class WorkerImpl implements WorkerApi {
     }
 
     const glueUrl = this.resolveEngineGlueUrl();
-    const factoryModule = (await import(/* @vite-ignore */ glueUrl)) as {
-      default: ModuleFactory;
-    };
+    this.glueFactory = (
+      (await import(/* @vite-ignore */ glueUrl)) as { default: ModuleFactory }
+    ).default;
 
-    this.module = await factoryModule.default({
+    this.icuData = opts.icuData ?? null;
+    if (!this.icuData && opts.config.icuDataUrl) {
+      const r = await fetch(opts.config.icuDataUrl);
+      if (!r.ok) {
+        throw new Error(
+          `texlive-wasm: HTTP ${r.status} fetching icuDataUrl ${opts.config.icuDataUrl}`,
+        );
+      }
+      this.icuData = new Uint8Array(await r.arrayBuffer());
+    }
+
+    // Drain every backend that exposes list() into the in-worker TDS map.
+    for (const backend of this.backends) {
+      if (!backend.list) continue;
+      const paths = await backend.list('');
+      for (const tdsPath of paths) {
+        const bytes = await backend.read(tdsPath);
+        if (bytes) this.tdsFiles.set(stripLeadingSlash(tdsPath), bytes);
+      }
+    }
+  }
+
+  /** Build a fresh engine instance with the TDS + ICU state applied. */
+  private async createInstance(): Promise<EmscriptenModule> {
+    if (!this.engineId || !this.glueFactory) {
+      throw new Error('Worker.init() must be called before run()');
+    }
+    const module = await this.glueFactory({
       noInitialRun: true,
-      thisProgram: `/bin/${opts.engineId}`,
+      thisProgram: `/bin/${this.engineId}`,
       print: (line: string) => {
         this.stdoutBuf += line + '\n';
       },
@@ -151,111 +184,71 @@ class WorkerImpl implements WorkerApi {
       },
     });
 
-    const FS = this.module.FS;
-
-    // Load ICU data if provided + the engine supports it.
-    let icuData = opts.icuData ?? null;
-    if (!icuData && opts.config.icuDataUrl && this.module._udata_setCommonData_78) {
-      const r = await fetch(opts.config.icuDataUrl);
-      if (!r.ok) {
-        throw new Error(
-          `texlive-wasm: HTTP ${r.status} fetching icuDataUrl ${opts.config.icuDataUrl}`,
-        );
-      }
-      icuData = new Uint8Array(await r.arrayBuffer());
-    }
-    if (icuData && this.module._udata_setCommonData_78) {
-      const ptr = this.module._malloc(icuData.length);
-      this.module.HEAPU8.set(icuData, ptr);
-      const errPtr = this.module._malloc(4);
-      this.module.HEAPU32[errPtr >> 2] = 0;
-      this.module._udata_setCommonData_78(ptr, errPtr);
+    if (this.icuData && module._udata_setCommonData_78) {
+      const ptr = module._malloc(this.icuData.length);
+      module.HEAPU8.set(this.icuData, ptr);
+      const errPtr = module._malloc(4);
+      module.HEAPU32[errPtr >> 2] = 0;
+      module._udata_setCommonData_78(ptr, errPtr);
       // U_ZERO_ERROR is 0; non-zero is informational, ICU still works
-      // with fallback paths. We don't fail init.
+      // with fallback paths. We don't fail instance creation.
     }
 
-    mkdirIfMissing(FS, '/bin');
-    FS.writeFile(`/bin/${opts.engineId}`, new Uint8Array());
-    mkdirIfMissing(FS, '/project');
-    mkdirIfMissing(FS, '/tmp');
-    mkdirIfMissing(FS, '/texmf-dist');
+    const FS = module.FS;
+    const dirs = new Set<string>(['/']);
+    mkdirCached(FS, '/bin', dirs);
+    FS.writeFile(`/bin/${this.engineId}`, new Uint8Array());
+    mkdirCached(FS, '/project', dirs);
+    if (!pathExists(FS, '/tmp')) FS.mkdir('/tmp');
+    dirs.add('/tmp');
+    // Writable caches for luaotfload and friends (see TEXMFVAR/TEXMFCACHE
+    // -cnf-line args in run()).
+    mkdirCached(FS, '/tmp/texmf-var', dirs);
+    mkdirCached(FS, '/tmp/texmf-cache', dirs);
+    mkdirCached(FS, '/texmf-dist', dirs);
 
-    // Preload TDS files from every backend that exposes list().
-    for (const backend of this.backends) {
-      if (!backend.list) continue;
-      const paths = await backend.list('');
-      for (const tdsPath of paths) {
-        const bytes = await backend.read(tdsPath);
-        if (!bytes) continue;
-        const absolute = `/texmf-dist/${stripLeadingSlash(tdsPath)}`;
-        mkdirP(FS, dirname(absolute));
-        FS.writeFile(absolute, bytes);
-      }
+    for (const [tdsPath, bytes] of this.tdsFiles) {
+      const absolute = `/texmf-dist/${tdsPath}`;
+      mkdirCached(FS, dirname(absolute), dirs);
+      FS.writeFile(absolute, bytes);
     }
+    return module;
   }
 
   async run(opts: RunOptions): Promise<RunResult> {
-    if (!this.engineId || !this.config || !this.module) {
+    if (!this.engineId || !this.config || !this.glueFactory) {
       throw new Error('Worker.init() must be called before run()');
     }
-    const FS = this.module.FS;
     const startedAt = performance.now();
 
-    clearDirContents(FS, '/project');
-    for (const file of opts.files ?? []) {
-      const absolute = `/project/${stripLeadingSlash(file.path)}`;
-      mkdirP(FS, dirname(absolute));
-      FS.writeFile(absolute, normalizeBytes(file.content));
-    }
-    FS.chdir(opts.cwd ?? '/project');
-
-    // Build final argv. -fmt/-cnf-line are web2c TeX-engine conventions;
-    // bibtexu/xdvipdfmx/makeindex reject them, so they only apply to the
-    // TeX engines.
-    const standardArgs: string[] = [];
-    if (TEX_ENGINES.has(this.engineId)) {
-      const fmt = FMT_PATH[this.engineId];
-      if (fmt && pathExists(FS, fmt)) {
-        standardArgs.push(`-fmt=${fmt}`);
-      }
-      standardArgs.push(
-        '-cnf-line=TEXMFCNF=/texmf-dist/web2c',
-        '-cnf-line=TEXMF=/texmf-dist',
-        '-cnf-line=TEXMFDIST=/texmf-dist',
-        '-cnf-line=TEXINPUTS=.;/texmf-dist/tex//',
-        '-cnf-line=TFMFONTS=/texmf-dist/fonts/tfm//',
-        '-cnf-line=VFFONTS=/texmf-dist/fonts/vf//',
-        '-cnf-line=T1FONTS=/texmf-dist/fonts/type1//',
-        '-cnf-line=ENCFONTS=/texmf-dist/fonts/enc//',
-        '-cnf-line=TEXFONTMAPS=/texmf-dist/fonts/map//',
-        '-cnf-line=OPENTYPEFONTS=/texmf-dist/fonts/opentype//;/texmf-dist/fonts/truetype//;/texmf-dist/fonts/type1//',
-        '-cnf-line=TRUETYPEFONTS=/texmf-dist/fonts/truetype//',
-      );
-      // RunOptions.env entries become texmf.cnf overrides — the only runtime
-      // environment channel Emscripten leaves us (ENV is frozen after init).
-      for (const [key, value] of Object.entries(opts.env ?? {})) {
-        standardArgs.push(`-cnf-line=${key}=${value}`);
-      }
-    }
-    const argv = [...standardArgs, ...opts.args];
-
-    // On-miss lazy fetch: TeX engines log every kpathsea miss they recover
-    // from via `mktexpk` etc. but a real "I can't find file X" hard-fails
-    // the compile. We catch those, ask the backends for the files, write
-    // them to MEMFS, and re-run once. Bounded to a single retry so a
-    // genuinely-missing file doesn't loop forever.
+    // On-miss lazy fetch: a hard "I can't find file X" fails the compile;
+    // we parse those out of the .log, pull the files from the backends into
+    // the TDS map, and re-run ONCE — on a fresh instance, like every run.
     const lazyFetch = opts.lazyFetch !== false;
     const maxRetries = lazyFetch ? 1 : 0;
     let exitCode = 0;
     let retriesUsed = 0;
     let stdout = '';
     let stderr = '';
+    let outputs = new Map<string, Uint8Array>();
+    let log = '';
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const module = await this.createInstance();
+      const FS = module.FS;
+      for (const file of opts.files ?? []) {
+        const absolute = `/project/${stripLeadingSlash(file.path)}`;
+        mkdirP(FS, dirname(absolute));
+        FS.writeFile(absolute, normalizeBytes(file.content));
+      }
+      FS.chdir(opts.cwd ?? '/project');
+
+      const argv = [...this.standardArgs(FS, opts), ...opts.args];
+
       this.stdoutBuf = '';
       this.stderrBuf = '';
       try {
-        exitCode = this.module.callMain(argv);
+        exitCode = module.callMain(argv);
       } catch (err) {
         const e = err as { status?: number };
         if (typeof e?.status === 'number') {
@@ -267,40 +260,70 @@ class WorkerImpl implements WorkerApi {
       stdout += this.stdoutBuf;
       stderr += this.stderrBuf;
 
+      outputs = new Map<string, Uint8Array>();
+      collectFiles(FS, '/project', '', outputs);
+      log = findLog(FS, opts.args);
+
       if (exitCode === 0 || attempt === maxRetries) break;
 
-      // Parse the .log we just wrote for files kpathsea couldn't find.
-      const currentLog = findLog(FS, opts.args);
-      const missing = parseMissingFiles(currentLog);
+      const missing = parseMissingFiles(log);
       if (missing.length === 0) break;
-
-      const fetched = await this.fetchMissingIntoMemFs(FS, missing);
+      const fetched = await this.fetchMissingIntoTds(missing);
       if (fetched === 0) break;
       retriesUsed++;
     }
-
-    const outputs = new Map<string, Uint8Array>();
-    collectFiles(FS, '/project', '', outputs);
 
     return {
       exitCode,
       stdout,
       stderr,
       outputs,
-      log: findLog(FS, opts.args),
+      log,
       durationMs: performance.now() - startedAt,
       lazyFetchRetries: retriesUsed,
     };
   }
 
+  /** -fmt/-cnf-line are web2c TeX-engine conventions; the other engines reject them. */
+  private standardArgs(FS: EmscriptenFS, opts: RunOptions): string[] {
+    if (!this.engineId || !TEX_ENGINES.has(this.engineId)) return [];
+    const args: string[] = [];
+    const fmt = FMT_PATH[this.engineId];
+    if (fmt && pathExists(FS, fmt)) {
+      args.push(`-fmt=${fmt}`);
+    }
+    args.push(
+      '-cnf-line=TEXMFCNF=/texmf-dist/web2c',
+      '-cnf-line=TEXMF=/texmf-dist',
+      '-cnf-line=TEXMFDIST=/texmf-dist',
+      // Writable caches — luaotfload refuses to start without one.
+      '-cnf-line=TEXMFVAR=/tmp/texmf-var',
+      '-cnf-line=TEXMFCACHE=/tmp/texmf-cache',
+      '-cnf-line=TEXINPUTS=.;/texmf-dist/tex//',
+      '-cnf-line=TFMFONTS=/texmf-dist/fonts/tfm//',
+      '-cnf-line=VFFONTS=/texmf-dist/fonts/vf//',
+      '-cnf-line=T1FONTS=/texmf-dist/fonts/type1//',
+      '-cnf-line=ENCFONTS=/texmf-dist/fonts/enc//',
+      '-cnf-line=TEXFONTMAPS=/texmf-dist/fonts/map//',
+      '-cnf-line=OPENTYPEFONTS=/texmf-dist/fonts/opentype//;/texmf-dist/fonts/truetype//;/texmf-dist/fonts/type1//',
+      '-cnf-line=TRUETYPEFONTS=/texmf-dist/fonts/truetype//',
+    );
+    // RunOptions.env entries become texmf.cnf overrides — the only runtime
+    // environment channel Emscripten leaves us (ENV is frozen after init).
+    for (const [key, value] of Object.entries(opts.env ?? {})) {
+      args.push(`-cnf-line=${key}=${value}`);
+    }
+    return args;
+  }
+
   /**
    * For each missing TDS path the log complained about, walk the backend
-   * chain and write the bytes into MEMFS. Returns how many files were
-   * successfully resolved. Searches multiple plausible TDS sublocations
-   * because the log usually says "lmroman10-regular.otf", not the absolute
-   * /texmf-dist/fonts/opentype/public/lm/lmroman10-regular.otf.
+   * chain and store the bytes into the TDS map (the next instance picks
+   * them up). Returns how many files were resolved. Searches multiple
+   * plausible TDS sublocations because the log usually says
+   * "lmroman10-regular.otf", not the absolute TDS path.
    */
-  private async fetchMissingIntoMemFs(FS: EmscriptenFS, missing: string[]): Promise<number> {
+  private async fetchMissingIntoTds(missing: string[]): Promise<number> {
     let written = 0;
     for (const name of missing) {
       const candidates = expandMissingName(name);
@@ -319,14 +342,8 @@ class WorkerImpl implements WorkerApi {
           }
         }
         if (bytes) {
-          const absolute = `/texmf-dist/${candidate.replace(/^\/+/, '')}`;
-          mkdirP(FS, dirname(absolute));
-          try {
-            FS.writeFile(absolute, bytes);
-            written++;
-          } catch {
-            // Already exists or unwritable — non-fatal.
-          }
+          this.tdsFiles.set(stripLeadingSlash(candidate), bytes);
+          written++;
           break;
         }
       }
@@ -338,7 +355,8 @@ class WorkerImpl implements WorkerApi {
     for (const b of this.backends) {
       await b.dispose?.();
     }
-    this.module = null;
+    this.glueFactory = null;
+    this.tdsFiles.clear();
   }
 
   private resolveEngineGlueUrl(): string {
@@ -404,36 +422,26 @@ function isDirMode(mode: number): boolean {
   return (mode & 0xf000) === 0x4000;
 }
 
-function mkdirIfMissing(FS: EmscriptenFS, path: string): void {
-  if (pathExists(FS, path)) return;
-  FS.mkdir(path);
-}
-
 function mkdirP(FS: EmscriptenFS, path: string): void {
   if (!path || path === '/' || pathExists(FS, path)) return;
   mkdirP(FS, dirname(path));
   FS.mkdir(path);
 }
 
-function normalizeBytes(content: string | Uint8Array): Uint8Array {
-  return typeof content === 'string' ? new TextEncoder().encode(content) : content;
+/**
+ * mkdir -p with a caller-held cache of created dirs — populating tens of
+ * thousands of TDS files per instance makes per-file stat() checks add up.
+ */
+function mkdirCached(FS: EmscriptenFS, path: string, seen: Set<string>): void {
+  if (!path || seen.has(path)) return;
+  const parent = dirname(path);
+  if (parent !== path) mkdirCached(FS, parent, seen);
+  if (!pathExists(FS, path)) FS.mkdir(path);
+  seen.add(path);
 }
 
-function clearDirContents(FS: EmscriptenFS, dir: string): void {
-  if (!pathExists(FS, dir)) {
-    mkdirP(FS, dir);
-    return;
-  }
-  for (const name of FS.readdir(dir)) {
-    if (name === '.' || name === '..') continue;
-    const full = `${dir}/${name}`;
-    const st = FS.stat(full);
-    if (isDirMode(st.mode)) {
-      clearDirContents(FS, full);
-    } else {
-      FS.unlink(full);
-    }
-  }
+function normalizeBytes(content: string | Uint8Array): Uint8Array {
+  return typeof content === 'string' ? new TextEncoder().encode(content) : content;
 }
 
 function collectFiles(

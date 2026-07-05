@@ -1,7 +1,11 @@
 name: build-engines
 
 # Long-running engine-compilation pipeline. Triggered manually or on tags.
-# Each engine × target is a separate job so we can rebuild one in isolation.
+# Each engine × target is a separate job; on manual dispatch the `engines`
+# and `targets` inputs select which matrix legs actually run.
+#
+# synctex is intentionally absent: it's built into each engine and the JS
+# parser in src/synctex/ covers standalone parsing (see CLAUDE.md).
 
 on:
   workflow_dispatch:
@@ -9,7 +13,7 @@ on:
       engines:
         description: 'Space-separated engine list (default: all)'
         required: false
-        default: 'pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex synctex'
+        default: 'pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex'
       targets:
         description: 'Space-separated targets (default: emscripten wasi)'
         required: false
@@ -24,15 +28,16 @@ permissions:
 jobs:
   builder-image:
     runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.bake.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
+      # Exposes ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL to run steps so
+      # `docker buildx --cache-from/--cache-to=type=gha` can authenticate.
+      - uses: crazy-max/ghaction-github-runtime@v3
+
       - name: build the toolchain image (cached)
-        id: bake
         run: |
           docker buildx build \
             --cache-from=type=gha \
@@ -40,7 +45,6 @@ jobs:
             --tag texlive-wasm-builder:ci \
             --load \
             engine/
-          echo "image=texlive-wasm-builder:ci" >> "$GITHUB_OUTPUT"
 
   build:
     needs: builder-image
@@ -48,14 +52,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex, synctex]
+        engine: [pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex]
         target: [emscripten, wasi]
+    # On dispatch, honor the engines/targets inputs; tag pushes build everything.
+    if: >-
+      ${{ github.event_name != 'workflow_dispatch'
+          || (contains(format(' {0} ', github.event.inputs.engines), format(' {0} ', matrix.engine))
+              && contains(format(' {0} ', github.event.inputs.targets), format(' {0} ', matrix.target))) }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - uses: docker/setup-buildx-action@v3
+
+      - uses: crazy-max/ghaction-github-runtime@v3
 
       - name: rebuild toolchain image from cache
         run: |

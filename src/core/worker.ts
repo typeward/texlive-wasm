@@ -58,15 +58,19 @@ export interface WorkerApi {
   dispose(): Promise<void>;
 }
 
+/**
+ * The WASMFS (-sWASMFS=1) JS API is a *subset* of the legacy FS shim:
+ * FS.isDir/isFile don't exist, and FS.analyzePath internally readFile()s any
+ * existing path — which throws EISDIR for directories. Only the members
+ * below are safe to use; existence/type checks go through stat() (see
+ * pathExists / isDirMode).
+ */
 interface EmscriptenFS {
   mkdir(path: string): void;
   writeFile(path: string, data: Uint8Array | string): void;
   readFile(path: string): Uint8Array;
   readdir(path: string): string[];
   stat(path: string): { mode: number; size: number };
-  isFile(mode: number): boolean;
-  isDir(mode: number): boolean;
-  analyzePath(path: string): { exists: boolean };
   chdir(path: string): void;
   unlink(path: string): void;
 }
@@ -211,7 +215,7 @@ class WorkerImpl implements WorkerApi {
     const standardArgs: string[] = [];
     if (TEX_ENGINES.has(this.engineId)) {
       const fmt = FMT_PATH[this.engineId];
-      if (fmt && FS.analyzePath(fmt).exists) {
+      if (fmt && pathExists(FS, fmt)) {
         standardArgs.push(`-fmt=${fmt}`);
       }
       standardArgs.push(
@@ -385,13 +389,28 @@ function dirname(p: string): string {
   return i <= 0 ? '/' : p.slice(0, i);
 }
 
+/** Existence check that is safe for directories under WASMFS (see interface note). */
+function pathExists(FS: EmscriptenFS, path: string): boolean {
+  try {
+    FS.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** S_IFDIR test on a stat mode — the WASMFS shim has no FS.isDir. */
+function isDirMode(mode: number): boolean {
+  return (mode & 0xf000) === 0x4000;
+}
+
 function mkdirIfMissing(FS: EmscriptenFS, path: string): void {
-  if (FS.analyzePath(path).exists) return;
+  if (pathExists(FS, path)) return;
   FS.mkdir(path);
 }
 
 function mkdirP(FS: EmscriptenFS, path: string): void {
-  if (!path || path === '/' || FS.analyzePath(path).exists) return;
+  if (!path || path === '/' || pathExists(FS, path)) return;
   mkdirP(FS, dirname(path));
   FS.mkdir(path);
 }
@@ -401,7 +420,7 @@ function normalizeBytes(content: string | Uint8Array): Uint8Array {
 }
 
 function clearDirContents(FS: EmscriptenFS, dir: string): void {
-  if (!FS.analyzePath(dir).exists) {
+  if (!pathExists(FS, dir)) {
     mkdirP(FS, dir);
     return;
   }
@@ -409,7 +428,7 @@ function clearDirContents(FS: EmscriptenFS, dir: string): void {
     if (name === '.' || name === '..') continue;
     const full = `${dir}/${name}`;
     const st = FS.stat(full);
-    if (FS.isDir(st.mode)) {
+    if (isDirMode(st.mode)) {
       clearDirContents(FS, full);
     } else {
       FS.unlink(full);
@@ -428,7 +447,7 @@ function collectFiles(
     const abs = `${absDir}/${name}`;
     const rel = relPrefix ? `${relPrefix}/${name}` : name;
     const st = FS.stat(abs);
-    if (FS.isDir(st.mode)) {
+    if (isDirMode(st.mode)) {
       collectFiles(FS, abs, rel, out);
     } else {
       out.set(rel, FS.readFile(abs));
@@ -508,7 +527,7 @@ function findLog(FS: EmscriptenFS, args: string[]): string {
   }
   if (!stem) return '';
   const logPath = `/project/${stem}.log`;
-  if (!FS.analyzePath(logPath).exists) return '';
+  if (!pathExists(FS, logPath)) return '';
   try {
     return new TextDecoder('utf-8', { fatal: false }).decode(FS.readFile(logPath));
   } catch {

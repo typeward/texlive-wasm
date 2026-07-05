@@ -1,6 +1,7 @@
 # Build container with both toolchains pinned.
 #
-# Stage 1: emsdk (Emscripten 4.0.x) for the browser/Tauri target.
+# Stage 1: emsdk (Emscripten, version pinned via EMSDK_VERSION below) for the
+#          browser/Tauri target.
 # Stage 2: wasi-sdk for the Node/Wasmtime target.
 # Stage 3: final image with both toolchains, plus the deps texlive-source's
 #          configure needs (perl, python, gperf, p7zip, build-essential, etc.).

@@ -22,9 +22,14 @@ Mobile-targeted patches applied on top of the upstream `texlive-source` tag.
 
 - One patch per concern. Filename: `NN-short-description.patch` (NN = apply order).
 - Generated with `git format-patch -1`.
-- Applied in `engine/Makefile`'s `source` target via `git -C source/texlive-source apply $(PATCHES)/*.patch`.
+- When the first `.patch` file lands here, wire a `git -C source/texlive-source
+  apply` loop into `engine/Makefile`'s `source` target (not implemented yet —
+  there is nothing to apply).
 
 ## Status
 
-Empty until Phase 1. The forks-against-upstream diffs land here as we hit each
-porting issue.
+No `.patch` files yet. The two source tweaks we currently need are applied
+inline by the Makefile's `source` target instead: `scripts/patch-icu-makefile.sh`
+(ICU data packaging) and the `mh-unknown` → `mh-linux` copy for the
+wasm32-emscripten host triple. Diffs against upstream land here as real patch
+files when we hit further porting issues.

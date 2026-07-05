@@ -104,13 +104,11 @@ $$(BUILD_DIR)/$(1)/wasi/$(1).wasm: $$(NATIVE_DONE) | source
 	    $$(MAKE) -j$$(shell nproc 2>/dev/null || echo 2) && \
 	    $$(MAKE) -C texk/web2c -j$$(shell nproc 2>/dev/null || echo 2) pdftex \
 	  ) > make.log 2>&1 \
-	  || (echo "==> [wasi] $(1) — make FAILED. Tail:"; tail -40 make.log; \
-	      echo "==> [wasi] $(1) — partial state; touching stub for downstream"; \
-	      mkdir -p $$(BUILD_DIR)/$(1)/wasi; touch $$@; exit 1); \
+	  || (echo "==> [wasi] $(1) — make FAILED. Tail:"; tail -40 make.log; exit 1); \
 	if [ -f $$(BUILD_DIR)/$(1)/wasi/Work/texk/web2c/pdftex ]; then \
 	  cp $$(BUILD_DIR)/$(1)/wasi/Work/texk/web2c/pdftex $$@; \
 	else \
-	  echo "==> [wasi] $(1) — pdftex binary not found; touching stub"; touch $$@; \
+	  echo "==> [wasi] $(1) — pdftex binary not found"; exit 1; \
 	fi; \
 	echo "==> [wasi] $(1) — DONE"; \
 	ls -la $$@

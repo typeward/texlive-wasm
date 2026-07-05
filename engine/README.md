@@ -21,8 +21,11 @@ docker run --rm -v "$PWD":/workspace -w /workspace/engine texlive-wasm-builder \
   make -j$(nproc) all dist
 ```
 
-Outputs land in `engine/dist/<engine>/<target>/`. The npm `prepack` step
-copies them into `engine-artifacts/`.
+Build outputs land in `engine/build/<engine>/<target>/`; `make dist` stages
+them into `engine/dist/<engine>/<target>/`. For local library work, copy them
+into the repo-root `engine-artifacts/<engine>/<target>/` tree (that's where
+the smoke tests and `scripts/pack-release.mjs` look). CI releases stage the
+same layout automatically (`.github/workflows/release.yml`).
 
 ## Pinned versions
 
@@ -30,10 +33,11 @@ copies them into `engine-artifacts/`.
 |---|---|
 | Emscripten | 5.0.7 |
 | wasi-sdk | 33.0 |
-| TL upstream branch | `branch2025` |
+| TL upstream branch | `branch2026` (commit `fb61589266`, "tl26 post-release") |
 
-## Phase 1 status
+## Status
 
-The Makefile structure is in place but the per-engine link recipes are stubbed.
-The first real implementation target is `pdflatex-emscripten`. Track progress
-in the project plan (`../plan.md`).
+All six engines (pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex)
+build and pass their smoke tests for the emscripten target; pdflatex also
+builds for wasi. See the status table in the repo-root `CLAUDE.md` and the
+roadmap in `../plan.md`.

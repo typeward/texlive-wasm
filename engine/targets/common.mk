@@ -22,16 +22,8 @@ endif
 # Reproducible builds.
 export SOURCE_DATE_EPOCH ?= 1700000000
 
-# Mobile-strip: include files exclude any TDS path matching these prefixes
-# when assembling the npm artifact bundles. (The engine binaries themselves
-# don't reference them; this is the bundle-size optimization.)
-MOBILE_STRIP_PREFIXES := \
-	doc/ \
-	source/ \
-	tex/latex/babel-* \
-	tex/generic/babel-* \
-	fonts/source/ \
-	scripts/
+# Mobile-strip patterns live in engine/configs/mobile-strip.list (the single
+# source of truth, consumed by scripts/build-manifest.ts --full-strip).
 
 # Format files we ship pre-built.
 FMT_pdflatex  := latex.fmt

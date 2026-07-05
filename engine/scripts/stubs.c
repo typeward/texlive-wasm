@@ -51,8 +51,8 @@ const uint8_t icudt76_dat[64] = {
     /* UDataInfo (20 bytes) */
     0x14, 0x00, /* size = 20 */
     0x00, 0x00, /* reserved */
-    0x01,       /* isBigEndian = 0 (little-endian) */
-    0x02,       /* charsetFamily = 0 (ASCII) — wait, set to 0 */
+    0x00,       /* isBigEndian = 0 (little-endian) */
+    0x00,       /* charsetFamily = 0 (U_ASCII_FAMILY) */
     0x02,       /* sizeofUChar = 2 */
     0x00,       /* reserved */
     0x00, 0x00, 0x00, 0x00, /* dataFormat */

@@ -1,9 +1,9 @@
-# Paths (TDS-relative) excluded from the npm artifact bundles when building
-# for the mobile target. Used by scripts/build-bundle.ts and the manifest
-# generator.
+# Paths (TDS-relative) demoted to the CDN tier when building the manifest —
+# consumed by scripts/build-manifest.ts (--full-strip); build-bundle.ts then
+# omits them from the core/full bundles because it packs by manifest tier.
 #
-# These are glob patterns (fnmatch); one per line; blank lines and #-comments
-# ignored.
+# These are glob patterns (`*` = within a segment, `**` = any depth); one per
+# line; blank lines and #-comments ignored.
 
 # Documentation — we never ship docs in a mobile bundle.
 doc/**
@@ -83,9 +83,3 @@ mfware/**
 
 # Perl scripts / tools we don't have a runtime for.
 scripts/**/*.pl
-
-# Manpages
-doc/man/**
-
-# Type1 fonts source (only .pfb is needed at runtime).
-fonts/source/**

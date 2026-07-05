@@ -1,7 +1,8 @@
 # Top-level driver for the engine build.
 #
-# Designed to be invoked inside the Docker container from `engine/Dockerfile`,
-# but also runs natively if EMSDK / WASI_SDK_PATH are set.
+# Designed to be invoked inside the Docker container from `engine/Dockerfile`
+# (the recipes source /opt/emsdk/emsdk_env.sh and expect the container's
+# toolchain layout — host builds outside the container are not supported).
 #
 # Targets:
 #   make all                  # all engines, both targets
@@ -25,8 +26,10 @@ BUILD_DIR  := $(ROOT)/build
 DIST_DIR   := $(ROOT)/dist
 PATCHES    := $(ROOT)/patches
 
-# Engines we build for v1.
-ENGINES_V1 := pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex synctex
+# Engines we build for v1. synctex is deliberately absent: it's compiled into
+# each engine and standalone parsing is JS-side (src/synctex/) — a standalone
+# synctex.wasm has no working configure wiring (see CLAUDE.md).
+ENGINES_V1 := pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex
 
 # Build targets.
 TARGETS := emscripten wasi
@@ -103,7 +106,11 @@ dist: all
 	@echo "==> Dist tree:" && find $(DIST_DIR) -type f -name '*.wasm' -o -name '*.js' | sort
 
 # Post-process artifacts: brotli + gzip pre-compression for static-host serving.
-# Idempotent; safe to re-run.
+# Idempotent; safe to re-run. (The script lives at the repo root, not engine/.)
 .PHONY: optimize
 optimize:
-	@bash $(ROOT)/scripts/optimize-wasm.sh
+	@bash $(ROOT)/../scripts/optimize-wasm.sh
+
+# Never leave a half-written target behind — a stale file would make the next
+# run falsely "up to date".
+.DELETE_ON_ERROR:

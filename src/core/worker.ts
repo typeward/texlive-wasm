@@ -20,6 +20,7 @@
 
 import * as Comlink from 'comlink';
 import type { EngineConfig, EngineId, RunOptions, RunResult, VfsBackend } from './types';
+import { createBundleFs } from '../vfs/bundlefs';
 
 /** Cloneable capability descriptor for one VFS backend. */
 export interface BackendMeta {
@@ -118,6 +119,13 @@ class WorkerImpl implements WorkerApi {
     this.backends = (opts.backendMeta ?? []).map((meta, i) =>
       reconstructBackend(meta, i, host ?? null),
     );
+
+    // A bundleUrl is fetched and unpacked here in the worker (highest
+    // priority backend) — the browser HTTP cache dedupes the download
+    // across engine instances and no file bytes cross the RPC boundary.
+    if (opts.config.bundleUrl) {
+      this.backends.unshift(await createBundleFs({ bundleUrl: opts.config.bundleUrl }));
+    }
 
     for (const b of this.backends) {
       await b.init?.();

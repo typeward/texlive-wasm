@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { gzipSync } from 'node:zlib';
 import { createBundleFs, detectFormat } from '../src/vfs/bundlefs';
 import { buildTar } from './helpers';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -26,6 +30,22 @@ describe('createBundleFs', () => {
     const fs = await createBundleFs({ bundleBytes: gz });
     await fs.init?.();
     expect(decode((await fs.read('a.tex'))!)).toBe('A');
+  });
+
+  it('fetches and unpacks a bundleUrl (the EngineConfig.bundleUrl path)', async () => {
+    const tar = buildTar([{ path: 'texmf/tex/latex/base/size10.clo', content: 'CLO' }]);
+    const gz = gzipSync(tar);
+    const ab = gz.buffer.slice(gz.byteOffset, gz.byteOffset + gz.byteLength);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, arrayBuffer: () => Promise.resolve(ab) }),
+    );
+    const fs = await createBundleFs({ bundleUrl: 'https://example.test/core/texmf.tar.gz' });
+    await fs.init?.();
+    expect(decode((await fs.read('tex/latex/base/size10.clo'))!)).toBe('CLO');
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledWith(
+      'https://example.test/core/texmf.tar.gz',
+    );
   });
 });
 

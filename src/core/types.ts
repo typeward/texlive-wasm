@@ -12,6 +12,13 @@ export interface EngineConfig {
   /** URL or absolute path of the `tex-packages.json` manifest. */
   manifestUrl?: string;
   /**
+   * URL of a core TDS tarball (`.tar.gz` / `.tar.br` / plain `.tar`). The
+   * engine worker fetches and unpacks it itself at init (a BundleFS is
+   * created worker-side), so repeated engine instances share the browser
+   * HTTP cache instead of shipping file bytes over the RPC boundary.
+   */
+  bundleUrl?: string;
+  /**
    * URL of `icudt78l.dat` (ICU locale data). Only used by ICU engines
    * (xelatex, bibtexu); without it, locale-specific ICU APIs return
    * U_MISSING_RESOURCE_ERROR but basic operation still works.

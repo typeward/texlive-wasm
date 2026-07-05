@@ -201,10 +201,9 @@ class WorkerImpl implements WorkerApi {
     mkdirCached(FS, '/project', dirs);
     if (!pathExists(FS, '/tmp')) FS.mkdir('/tmp');
     dirs.add('/tmp');
-    // Writable caches for luaotfload and friends (see TEXMFVAR/TEXMFCACHE
-    // -cnf-line args in run()).
+    // Writable cache root for luaotfload and friends (see TEXMFVAR/
+    // TEXMFCACHE -cnf-line args in run()).
     mkdirCached(FS, '/tmp/texmf-var', dirs);
-    mkdirCached(FS, '/tmp/texmf-cache', dirs);
     mkdirCached(FS, '/texmf-dist', dirs);
 
     for (const [tdsPath, bytes] of this.tdsFiles) {
@@ -296,9 +295,14 @@ class WorkerImpl implements WorkerApi {
       '-cnf-line=TEXMFCNF=/texmf-dist/web2c',
       '-cnf-line=TEXMF=/texmf-dist',
       '-cnf-line=TEXMFDIST=/texmf-dist',
-      // Writable caches — luaotfload refuses to start without one.
+      // Writable cache — luaotfload refuses to start without one. Both vars
+      // must point at the SAME root: with openout_any=p (paranoid, the TL
+      // default) LuaTeX only permits absolute-path writes under $TEXMFVAR /
+      // $TEXMFSYSVAR, and luaotfload prefers $TEXMFCACHE — pointing it
+      // anywhere else gets every cache mkdir/write "operation not
+      // permitted" (verified against the real engine).
       '-cnf-line=TEXMFVAR=/tmp/texmf-var',
-      '-cnf-line=TEXMFCACHE=/tmp/texmf-cache',
+      '-cnf-line=TEXMFCACHE=/tmp/texmf-var',
       '-cnf-line=TEXINPUTS=.;/texmf-dist/tex//',
       '-cnf-line=TFMFONTS=/texmf-dist/fonts/tfm//',
       '-cnf-line=VFFONTS=/texmf-dist/fonts/vf//',

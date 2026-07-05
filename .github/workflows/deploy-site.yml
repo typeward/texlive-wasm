@@ -1,0 +1,126 @@
+name: deploy-site
+
+# Builds the showcase site (demo/) and deploys it to GitHub Pages.
+#
+# Engine .wasm artifacts come from the latest GitHub Release (or an explicit
+# tag via the dispatch input); the TeX tree is assembled on the runner by
+# scripts/fetch-tds.sh (cached) with formats rebuilt by the wasm engines
+# themselves, then packed into core/texmf.tar.gz.
+#
+# Prerequisites: the repo is public, Pages is enabled with Source = GitHub
+# Actions, and at least one v* release with engine assets exists.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Engine release tag (default: latest release)'
+        required: false
+  push:
+    branches: [main]
+    paths:
+      - 'demo/**'
+      - 'src/**'
+      - 'scripts/fetch-tds.sh'
+      - 'scripts/pack-tds.mjs'
+      - 'scripts/build-fmt.mjs'
+      - 'scripts/build-xelatex-fmt.mjs'
+      - 'scripts/build-lualatex-fmt.mjs'
+      - '.github/workflows/deploy-site.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-site:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            demo/package-lock.json
+
+      - name: download engine release assets
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          mkdir -p release-assets engine-artifacts
+          gh release download ${RELEASE_TAG:+"$RELEASE_TAG"} \
+            -p '*-emscripten.tar.gz' -p 'icudt78l.dat.gz' -D release-assets
+          # Tarballs carry <engine>/emscripten/... entry paths (pack-release.mjs).
+          for t in release-assets/*-emscripten.tar.gz; do
+            tar -xzf "$t" -C engine-artifacts
+          done
+          gunzip -c release-assets/icudt78l.dat.gz > engine-artifacts/icudt78l.dat
+          find engine-artifacts -maxdepth 3 | sort
+
+      - name: cache TDS tree
+        uses: actions/cache@v4
+        with:
+          path: engine-artifacts/texmf
+          key: tds-${{ hashFiles('scripts/fetch-tds.sh') }}
+
+      - name: fetch TDS (no-op on cache hit)
+        run: bash scripts/fetch-tds.sh
+
+      # .fmt files are binary-coupled to the exact engine build — always
+      # regenerate them with the wasm engines just downloaded (overwrites
+      # whatever the cached tree holds).
+      - name: rebuild formats with the wasm engines
+        run: |
+          node scripts/build-fmt.mjs
+          node scripts/build-xelatex-fmt.mjs
+          node scripts/build-lualatex-fmt.mjs
+
+      - name: pack TDS bundle
+        run: node scripts/pack-tds.mjs
+
+      - name: build library (demo consumes it via file:..)
+        run: |
+          npm ci
+          npm run build
+
+      - name: build showcase site
+        run: |
+          npm --prefix demo ci
+          npm --prefix demo run build
+
+      - name: stage runtime assets into dist/core
+        run: |
+          for e in pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex; do
+            mkdir -p "demo/dist/core/$e/emscripten"
+            cp "engine-artifacts/$e/emscripten/$e.js" \
+               "engine-artifacts/$e/emscripten/$e.wasm" \
+               "demo/dist/core/$e/emscripten/"
+          done
+          cp engine-artifacts/texmf.tar.gz engine-artifacts/icudt78l.dat demo/dist/core/
+          du -sh demo/dist demo/dist/core
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo/dist
+
+  deploy:
+    needs: build-site
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

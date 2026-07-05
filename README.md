@@ -8,6 +8,10 @@ Tauri / Capacitor mobile app, in Node, and under Wasmtime on the edge —
 from the same C sources, with one `.wasm` per engine.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Live demo](https://img.shields.io/badge/live%20demo-typeward.github.io%2Ftexlive--wasm-2f3e55)](https://typeward.github.io/texlive-wasm/)
+
+**[Try it in your browser →](https://typeward.github.io/texlive-wasm/)** — all six
+engines, compiled client-side, no server.
 
 ## Engines
 
@@ -231,7 +235,7 @@ scripts/
   cli.cjs             — `npx texlive-wasm`
   pack-release.mjs    — bundle engine-artifacts/ into release/*.tar.gz
   ensure-assets.mjs   — used by examples
-demo/                 — Vite + SolidJS web demo
+demo/                 — Vite + SolidJS showcase site (deployed to GitHub Pages)
 examples/tauri/       — Tauri 2.0 + SolidJS example
 engine/               — Docker-based engine build (Emscripten + wasi-sdk)
 plan.md               — design notes & roadmap

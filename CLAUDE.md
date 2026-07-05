@@ -27,7 +27,7 @@ See `plan.md` Phase 1 for design and the remaining ICU-data + fontconfig work.
 - `example/busytex/` — Reference: the original busytex (TL 2023, MIT). Emscripten + musl single-binary, custom packfs, Emscripten `.data`+`.js` preloaded packages, JS pipeline that drives xelatex/bibtex8/xdvipdfmx in sequence. Study `Makefile`, `busytex.c`, `packfs.c`, `busytex_pipeline.js`.
 - `example/texlyre-busytex/` — Reference: TS wrapper around a TL 2026 rebuild of busytex (AGPL-3). Adds Web Worker bridge, per-engine builds, on-demand TLOD endpoint, IndexedDB cache via Emscripten `EM_PRELOAD_CACHE`. Study `src/core/busytex-runner.ts`, `src/core/package-cache.ts`.
 - `plan.md` — design + roadmap for the new implementation.
-- (planned) `src/`, `engine/`, `scripts/`, `vendor/texlive-source/`.
+- `src/` — TS wrapper library; `engine/` — Docker engine build; `scripts/` — asset/build/smoke scripts; `vendor/texlive-source/` — TL submodule (branch2026); `demo/` — SolidJS web demo; `examples/tauri/` — Tauri 2.0 example.
 
 ## Locked decisions (see plan.md §9)
 

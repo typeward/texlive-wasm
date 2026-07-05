@@ -315,13 +315,13 @@ Reproducibility: pin `SOURCE_DATE_EPOCH`, fix tar ordering, sha256-check artifac
 - Repo skeleton, `.tool-versions`, `.editorconfig`, `.prettierrc.json`, `.gitignore`.
 - `package.json` (ESM-first, dual ESM/CJS exports, `texlive-wasm/tauri` subpath), `tsconfig.json` (strict + exactOptionalPropertyTypes), Vite library build, Vitest.
 - Full TS source skeleton with typed API: `createEngine`, `latexmk`, engine wrappers (PdfLatex/XeLatex/LuaLatex/Bibtexu/Makeindex/Xdvipdfmx), VFS layer chain (BundleFS/OPFS/FETCHFS/TauriFS), manifest types, SyncTeX parser.
-- Engine build system scaffold: `engine/Dockerfile` pinning Emscripten 4.0.22 + wasi-sdk 24, top-level Makefile, per-target Makefiles, patch dir, mobile-strip config.
+- Engine build system scaffold: `engine/Dockerfile` with pinned toolchains (initially Emscripten 4.0.22 + wasi-sdk 24; bumped to Emscripten 5.0.7 + wasi-sdk 33 during Phase 1), top-level Makefile, per-target Makefiles, patch dir, mobile-strip config.
 - Scripts: `build-manifest.ts` (runnable; SHA-256 + tier classification + glob matcher), `build-bundle.ts` (tar + brotli at quality 11), `cli.cjs`, `download-tl-source.sh`.
 - CI: `ci.yml` (lint + typecheck + test + build on every push) and `build-engines.yml` (manual / tag-triggered Docker matrix).
 - Demo: SolidJS + Vite + Tauri-ready skeleton at `demo/` with COOP/COEP headers wired.
 - Verified green: `npm run lint`, `npm run typecheck`, `npm test` (5/5 passing), `npm run build` (14 KB ESM bundle).
 
-### Phase 1 — engine compilation ✅ (4 of 7 engines compiled and verified, on **TeX Live 2026**)
+### Phase 1 — engine compilation ✅ (all 6 engines compiled and verified, on **TeX Live 2026**; standalone synctex deferred — built into each engine)
 
 **Built and verified against TL 2026** (`branch2026`, commit `fb61589266`):
 
@@ -356,31 +356,31 @@ All are MODULARIZE/EXPORT_ES6/WASMFS-built and load via `await factory({ ... })`
 - For xelatex/bibtexu cross-builds, the engine recipe symlinks `engine/build/icu-native/` into the engine's `Work/libs/icu/icu-native/`, so TL skips re-configuring ICU's host side.
 - Exports `PKGDATA_OPTS=--without-assembly -O .../icupkg.inc` so pkgdata generates `.c` (compiled to wasm) instead of `.s` (ELF assembly that wasm-ld can't link).
 
-**Deferred (next session):**
+**Formerly deferred, now resolved:**
 
-1. **xelatex** — **blocked on wasm fontconfig**. XeTeX's `XeTeXFontMgr_FC.cpp` includes `<fontconfig/fontconfig.h>` for font discovery; we don't currently build fontconfig. Path forward: add an `engine/targets/fontconfig-wasm.mk` that:
-   - Downloads expat 2.5+ (CMake-build) and fontconfig 2.14+ (autotools).
-   - Cross-compiles both against the same emcc wrapper + freetype2 (which we already build in libs/freetype2).
-   - Wires the resulting `libfontconfig.a` into `TL_LINK_ARCS_xelatex`.
-   - Provides a minimal `fonts.conf` mounted at `/etc/fonts/fonts.conf` so FcInit finds something at runtime.
+1. **xelatex** ✅ — wasm fontconfig landed as `engine/targets/fontconfig-wasm.mk`
+   (expat 2.6.4 + freetype 2.13.3 + fontconfig 2.15.0 cross-compiled standalone),
+   wired into `TL_LINK_ARCS_xelatex`. xelatex.wasm builds and instantiates.
 
-2. **bibtexu** — **blocked on ICU data ELF/wasm mismatch**. `libicudata.a` is built by ICU's `pkgdata` which uses native `genccode` to wrap ~1000 resource bundles (`*_res.o`) into a single archive. Even with `--without-assembly`, those object files are produced in ELF format and wasm-ld can't link them. The undefined symbol is `icudt78_dat`. Two paths:
-   - Run `pkgdata` in `-m common` mode (single .dat file, loaded at runtime from disk) instead of `-m static` (linked into the lib). Then ICU's `udata_setCommonData()` API loads it from MEMFS.
-   - Or build a no-data ICU using `--with-data-packaging=files` and only mount the specific locale data files we need.
+2. **bibtexu** ✅ — resolved via the stub `icudt78_dat` in `engine/scripts/stubs.c`
+   plus runtime `udata_setCommonData()` loading of `icudt78l.dat` from JS
+   (see `src/core/worker.ts`). bibtexu.wasm builds and runs.
 
-3. **synctex** — TL builds synctex as a `.o` linked into each engine (not a standalone binary). For our purposes, the JS synctex parser at `src/synctex/index.ts` reads `.synctex.gz` output produced by pdflatex/lualatex/xelatex.
+3. **synctex** — deferred permanently for v1: TL builds synctex as a `.o` linked
+   into each engine (not a standalone binary). The JS synctex parser at
+   `src/synctex/index.ts` reads the `.synctex.gz` output instead.
 
-4. **TDS bundle for end-to-end** (`latex.fmt` + minimum class/style files) — required for a real `\documentclass{article}` → `.pdf` smoke test. Two paths:
-   - Download a minimal TeX Live TDS subset from CTAN and bundle as our "core" tarball.
-   - Use the just-built pdflatex.wasm + `iniTeX -ini` to dump a `latex.fmt` from `latex.ltx` directly. Self-bootstrapping but more complex.
+4. **TDS bundle for end-to-end** ✅ — `scripts/fetch-tds.sh` assembles a minimal
+   TeX Live TDS subset; the pdflatex smoke test compiles
+   `\documentclass{article}` → a real PDF with it.
 
 **TS wrapper layer ✅** — `src/core/worker.ts` is wired and verified: it loads the engine ES module via `import()`, instantiates via the factory, sets up WASMFS mounts (`/project`, `/tmp`, `/texmf-dist`), drains VFS backends into MEMFS, then `callMain(args)` and captures stdout/stderr/outputs. The smoke tests above use exactly this code path.
 
 **Exit criteria for the goal:**
 - ✅ Engine `.wasm` artifacts build cleanly in the toolchain image.
-- ✅ pdflatex + lualatex compile and start (smoke test passes).
-- 🚧 A real `latexmk` end-to-end ("hello world" .tex → .pdf) requires a TDS bundle — see Phase 2 BundleFS work.
-- 🚧 xelatex + bibtexu need the ICU pre-build approach above.
+- ✅ All six engines compile and start (smoke tests pass).
+- ✅ End-to-end "hello world" .tex → .pdf verified (`scripts/smoke-pdflatex.mjs`, 2.4 KB PDF 1.5).
+- ✅ xelatex + bibtexu run with the native ICU pre-build + runtime icudt78l.dat loading.
 
 ### Phase 2 — FETCHFS + OPFS cache (2 weeks)
 

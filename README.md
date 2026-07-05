@@ -22,10 +22,11 @@ commit `fb61589266`):
 | BibTeXu         | `bibtexu.wasm`            | 877 KB  | runs                                                                  |
 | xdvipdfmx       | `xdvipdfmx.wasm`          | 765 KB  | instantiates                                                          |
 | makeindex       | `makeindex.wasm`          | 192 KB  | instantiates                                                          |
-| pdfLaTeX (WASI) | `pdflatex.wasm` (wasi-sdk)| 2.0 MB  | Node / Wasmtime / edge                                                |
+| pdfLaTeX (WASI) | `pdflatex.wasm` (wasi-sdk)| 2.0 MB  | Node / Wasmtime / edge — build locally; not in published releases yet |
 
-SyncTeX is built into every engine; the JS parser lives in
-`src/synctex/`.
+SyncTeX is built into every engine. The JS parser in `src/synctex/`
+currently extracts the input-file list; forward/reverse position lookup
+is scheduled for Phase 4.
 
 ## Install
 
@@ -45,7 +46,8 @@ npx texlive-wasm download-assets
 # or specify a destination + pinned tag
 npx texlive-wasm download-assets --tag v0.1.0-alpha.0 ./static/texlive
 
-# or a subset (skip 100 MB of TDS if you ship your own)
+# or a subset (skip 100 MB of TDS if you ship your own); names match
+# checksums.json keys, the .tar.gz/.gz suffix may be omitted
 npx texlive-wasm download-assets --assets pdflatex-emscripten,icudt78l.dat
 ```
 
@@ -180,7 +182,7 @@ import {
   Makeindex,
   Xdvipdfmx,
   latexmk,                 // multi-pass driver
-  createSynctex,           // JS parser for .synctex(.gz)
+  createSynctex,           // JS parser for .synctex(.gz) — file list today, lookups in Phase 4
   loadManifest,            // tex-packages.json reader
 } from 'texlive-wasm';
 

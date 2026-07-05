@@ -10,9 +10,10 @@
  *
  *   import { createEngine } from 'texlive-wasm';
  *   import { withTauriFs } from 'texlive-wasm/tauri';
+ *   import { BaseDirectory } from '@tauri-apps/plugin-fs';
  *
  *   const engine = await withTauriFs(
- *     await createEngine('xelatex', { manifestUrl: 'asset://texmf/manifest.json' }),
+ *     (vfs) => createEngine('xelatex', { vfs }),
  *     { texmfRoot: 'texmf', baseDir: BaseDirectory.AppData },
  *   );
  */
@@ -24,8 +25,10 @@ export interface TauriFsOptions {
   texmfRoot: string;
   /**
    * Tauri BaseDirectory enum value. We accept it as a number to avoid a
-   * hard dependency on @tauri-apps/api types here. Common values:
-   *   AppData = 9, AppLocalData = 10, AppConfig = 11, Resource = 19.
+   * hard dependency on @tauri-apps/api types here. Prefer importing
+   * `BaseDirectory` from @tauri-apps/plugin-fs; for reference, Tauri 2
+   * values are: Resource = 11, AppConfig = 13, AppData = 14,
+   * AppLocalData = 15.
    */
   baseDir: number;
 }

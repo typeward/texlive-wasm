@@ -11,6 +11,12 @@ export interface EngineConfig {
   fmtPath?: string;
   /** URL or absolute path of the `tex-packages.json` manifest. */
   manifestUrl?: string;
+  /**
+   * URL of `icudt78l.dat` (ICU locale data). Only used by ICU engines
+   * (xelatex, bibtexu); without it, locale-specific ICU APIs return
+   * U_MISSING_RESOURCE_ERROR but basic operation still works.
+   */
+  icuDataUrl?: string;
   /** When supplied, FETCHFS uses this as the CDN base for long-tail packages. */
   cdnBaseUrl?: string;
   /** Whether to use a Web Worker (default: true in browser, false in Node). */
@@ -37,11 +43,19 @@ export interface RunOptions {
   files?: FileInput[];
   /** Working directory inside the engine. Default: `/project`. */
   cwd?: string;
-  /** stdin payload (rarely used for TeX engines). */
+  /** stdin payload. Reserved — not implemented yet. */
   stdin?: string | Uint8Array;
-  /** Environment variables to merge over the defaults. */
+  /**
+   * kpathsea variable overrides (TEXINPUTS, TEXMFCNF, ...). Injected as
+   * `-cnf-line=KEY=VAL` args for the TeX engines; ignored for bibtexu,
+   * xdvipdfmx and makeindex (Emscripten freezes real env vars at init).
+   */
   env?: Record<string, string>;
-  /** Maximum wall-clock time before the engine is aborted, in ms. */
+  /**
+   * Maximum wall-clock time before the run is aborted, in ms. The engine
+   * runs synchronously inside its worker, so aborting terminates the worker
+   * — the handle is unusable afterwards and must be recreated.
+   */
   timeoutMs?: number;
   /**
    * If true (default), the worker parses missing-file errors out of the .log
@@ -86,8 +100,9 @@ export interface CompileResult {
  * A pluggable VFS backend mounted under `/texmf-dist`.
  *
  * Layers are consulted in order; the first one that resolves wins.
- * Implementations may be sync or async — the WASMFS adapter handles both
- * (the synchronous engine thread uses SharedArrayBuffer + Atomics to wait).
+ * Implementations may be sync or async. Backends that expose list() are
+ * drained into MEMFS when the engine initializes; the others are consulted
+ * on demand by the lazy-fetch retry after a failed pass (see worker.ts).
  */
 export interface VfsBackend {
   readonly id: string;

@@ -6,15 +6,18 @@
  * untar into a Map, and serve reads from RAM.
  *
  * - `bundleUrl` is fetched as bytes; the format ('gzip'/'br') is auto-detected
- *   from the URL extension or the response's Content-Encoding header.
+ *   from the URL extension or magic bytes.
+ * - `manifestUrl` alone also works: the manifest's `coreBundleUrl` (resolved
+ *   relative to the manifest) names the bundle to fetch.
  * - For Node/Tauri tests, callers can pass `bundleBytes` directly.
  */
 
 import type { VfsBackend } from '../core/types';
+import { loadManifest } from '../core/manifest';
 import { decompress, untar } from './tar';
 
 export interface BundleFsOptions {
-  /** Manifest URL is used to find the bundle URL and verify integrity. */
+  /** Manifest URL; its `coreBundleUrl` locates the bundle when `bundleUrl` is not given. */
   manifestUrl?: string;
   /** Explicit bundle URL override. */
   bundleUrl?: string;
@@ -22,7 +25,7 @@ export interface BundleFsOptions {
   bundleBytes?: Uint8Array;
   /**
    * Compression format. Default: auto-detect from bundleUrl suffix (`.gz`
-   * / `.br`) or via magic-byte sniff on bundleBytes.
+   * / `.br`) or via magic-byte sniff on the bytes.
    */
   format?: 'gzip' | 'br';
   /**
@@ -38,13 +41,20 @@ export async function createBundleFs(opts: BundleFsOptions): Promise<VfsBackend>
 
   async function load(): Promise<void> {
     let bytes = opts.bundleBytes;
-    if (!bytes && opts.bundleUrl) {
-      const r = await fetch(opts.bundleUrl);
-      if (!r.ok) throw new Error(`BundleFs: HTTP ${r.status} for ${opts.bundleUrl}`);
+    let bundleUrl = opts.bundleUrl;
+    if (!bytes && !bundleUrl && opts.manifestUrl) {
+      const manifest = await loadManifest(opts.manifestUrl);
+      if (manifest.coreBundleUrl) {
+        bundleUrl = new URL(manifest.coreBundleUrl, absolutize(opts.manifestUrl)).toString();
+      }
+    }
+    if (!bytes && bundleUrl) {
+      const r = await fetch(bundleUrl);
+      if (!r.ok) throw new Error(`BundleFs: HTTP ${r.status} for ${bundleUrl}`);
       bytes = new Uint8Array(await r.arrayBuffer());
     }
     if (!bytes) return;
-    const format = opts.format ?? detectFormat(opts.bundleUrl, bytes);
+    const format = opts.format ?? detectFormat(bundleUrl, bytes);
     const tar = format === 'raw' ? bytes : await decompress(bytes, format);
     for (const entry of untar(tar)) {
       if (entry.type !== 'file') continue;
@@ -80,14 +90,32 @@ function stripLeading(p: string): string {
   return p.replace(/^\/+/, '');
 }
 
-function detectFormat(url: string | undefined, bytes: Uint8Array): 'gzip' | 'br' | 'raw' {
+/** Make a possibly-relative manifest URL absolute so it can be a URL base. */
+function absolutize(url: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
+  const origin = typeof location !== 'undefined' ? location.href : 'file:///';
+  return new URL(url, origin).toString();
+}
+
+export function detectFormat(url: string | undefined, bytes: Uint8Array): 'gzip' | 'br' | 'raw' {
   if (url) {
     if (url.endsWith('.tar.gz') || url.endsWith('.tgz')) return 'gzip';
     if (url.endsWith('.tar.br')) return 'br';
+    if (url.endsWith('.tar')) return 'raw';
   }
-  // Magic-byte sniff. gzip starts with 1F 8B.
+  // gzip has magic bytes 1F 8B.
   if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) return 'gzip';
-  // Brotli has no magic bytes; if it's not a tar (starts with name chars
-  // or POSIX ustar at offset 257), assume brotli.
-  return 'raw';
+  // A plain tar has "ustar" at offset 257 of the first header block.
+  if (
+    bytes.length >= 262 &&
+    bytes[257] === 0x75 && // u
+    bytes[258] === 0x73 && // s
+    bytes[259] === 0x74 && // t
+    bytes[260] === 0x61 && // a
+    bytes[261] === 0x72 // r
+  ) {
+    return 'raw';
+  }
+  // Brotli has no magic bytes — it's what's left.
+  return 'br';
 }

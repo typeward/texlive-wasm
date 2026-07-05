@@ -46,8 +46,15 @@ export function untar(bytes: Uint8Array): TarEntry[] {
       pendingLongName = decoder.decode(content).replace(/\0+$/, '');
       continue;
     }
-    if (typeflag === 'x' || typeflag === 'g') {
-      // PAX extended headers — skip; basic ustar fields suffice for our use.
+    if (typeflag === 'x') {
+      // PAX extended header: may carry a `path` record that overrides the
+      // (possibly truncated) ustar name of the NEXT entry.
+      const paxPath = parsePaxPath(decoder.decode(content));
+      if (paxPath) pendingLongName = paxPath;
+      continue;
+    }
+    if (typeflag === 'g') {
+      // PAX global header — no per-entry data we care about.
       continue;
     }
 
@@ -56,6 +63,27 @@ export function untar(bytes: Uint8Array): TarEntry[] {
     out.push({ path: fullPath, content: type === 'file' ? content : new Uint8Array(), type });
   }
   return out;
+}
+
+/**
+ * PAX extended-header body is a sequence of "<len> <key>=<value>\n" records
+ * where <len> counts the whole record in bytes. Returns the `path` value.
+ */
+function parsePaxPath(body: string): string | null {
+  let i = 0;
+  while (i < body.length) {
+    const space = body.indexOf(' ', i);
+    if (space < 0) break;
+    const len = Number(body.slice(i, space));
+    if (!Number.isFinite(len) || len <= 0) break;
+    const record = body.slice(space + 1, i + len);
+    const eq = record.indexOf('=');
+    if (eq > 0 && record.slice(0, eq) === 'path') {
+      return record.slice(eq + 1).replace(/\n$/, '');
+    }
+    i += len;
+  }
+  return null;
 }
 
 function readCString(block: Uint8Array, start: number, len: number): string {

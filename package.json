@@ -18,15 +18,18 @@
     },
     "./tauri": {
       "types": "./dist/tauri.d.ts",
-      "import": "./dist/tauri.js"
+      "import": "./dist/tauri.js",
+      "require": "./dist/tauri.cjs"
     },
     "./worker": {
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/worker.js"
+      "types": "./dist/core/worker.d.ts",
+      "import": "./dist/worker.js",
+      "require": "./dist/worker.cjs"
     },
     "./manifest": {
       "types": "./dist/manifest.d.ts",
-      "import": "./dist/manifest.js"
+      "import": "./dist/manifest.js",
+      "require": "./dist/manifest.cjs"
     }
   },
   "files": [
@@ -40,10 +43,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && vite build",
+    "prepack": "npm run build",
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "prettier --check 'src/**/*.ts' 'scripts/**/*.ts'",
-    "format": "prettier --write 'src/**/*.ts' 'scripts/**/*.ts'",
+    "lint": "prettier --check \"src/**/*.ts\" \"scripts/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.ts\" \"test/**/*.ts\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "engines:build": "make -C engine all",

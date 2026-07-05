@@ -6,10 +6,12 @@ export interface XeLatexCompileOptions {
   files?: FileInput[];
   interaction?: 'nonstopmode' | 'batchmode' | 'errorstopmode' | 'scrollmode';
   /**
-   * XeTeX always writes an `.xdv` intermediate; pass `noPdf: true` if you want
-   * to keep it as `.xdv` (typically because you'll run bibtex/biber and then
-   * xdvipdfmx yourself). Default: false (engine produces the .xdv but the
-   * xelatex driver also writes .pdf via xdvipdfmx).
+   * XeTeX writes an `.xdv` intermediate and normally shells out to
+   * xdvipdfmx for the PDF — but the WASM build cannot spawn processes
+   * (no popen), so that driver mode is unavailable. Default: true (keep
+   * the .xdv; run the separate Xdvipdfmx engine on it — `latexmk` does
+   * this automatically). Setting false is only useful for native-ish
+   * runtimes and will fail in the browser/WASI.
    */
   noPdf?: boolean;
   haltOnError?: boolean;
@@ -24,7 +26,7 @@ export class XeLatex extends BaseEngineWrapper {
       '--no-shell-escape',
       `--interaction=${options.interaction ?? 'nonstopmode'}`,
       ...(options.haltOnError !== false ? ['--halt-on-error'] : []),
-      ...(options.noPdf ? ['--no-pdf'] : []),
+      ...(options.noPdf !== false ? ['--no-pdf'] : []),
       ...(options.extraArgs ?? []),
       options.mainTex,
     ];

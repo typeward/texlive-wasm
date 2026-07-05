@@ -21,9 +21,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": "src",
-    "types": ["node", "vitest/globals"]
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "dist", "example", "engine", "vendor", "demo"]
 }

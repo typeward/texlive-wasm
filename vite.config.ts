@@ -5,6 +5,11 @@ import topLevelAwait from 'vite-plugin-top-level-await';
 import dts from 'vite-plugin-dts';
 
 export default defineConfig({
+  // Relative base so the worker asset URL emitted into dist/index.js stays
+  // relative to the module ("assets/worker-*.js"), not root-absolute
+  // ("/assets/worker-*.js") — consumers bundling the lib (Typeward app)
+  // can't resolve a root-absolute asset path inside node_modules.
+  base: './',
   plugins: [
     wasm(),
     topLevelAwait(),
@@ -13,6 +18,7 @@ export default defineConfig({
       outDir: 'dist',
       insertTypesEntry: true,
       rollupTypes: false,
+      exclude: ['**/*.test.ts', 'test/**'],
     }),
   ],
   build: {
@@ -40,8 +46,6 @@ export default defineConfig({
     format: 'es',
     plugins: () => [wasm(), topLevelAwait()],
   },
-  test: {
-    environment: 'node',
-    include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
-  },
+  // Test config lives in vitest.config.ts (vitest does not merge this file
+  // when a dedicated config exists).
 });

@@ -34,7 +34,20 @@ export type {
   VfsBackend,
 } from './core/types';
 
-export type { LatexmkOptions, LatexmkResult } from './latexmk';
+export type { LatexmkOptions, LatexmkResult, LatexmkEngine } from './latexmk';
+
+export type { EngineWrapperOptions } from './engines/base';
+export type { PdfLatexCompileOptions } from './engines/pdflatex';
+export type { XeLatexCompileOptions } from './engines/xelatex';
+export type { LuaLatexCompileOptions } from './engines/lualatex';
+export type { BibtexuOptions } from './engines/bibtexu';
+export type { MakeindexOptions } from './engines/makeindex';
+export type { XdvipdfmxOptions } from './engines/xdvipdfmx';
+
+export type { BundleFsOptions } from './vfs/bundlefs';
+export type { FetchFsOptions } from './vfs/fetchfs';
+export type { OpfsFsOptions } from './vfs/opfsfs';
+export { createBundleFs, createFetchFs, createOpfsFs, defaultBackends } from './vfs';
 
 export type { TexPackagesManifest, ManifestEntry, ManifestTier } from './core/manifest';
 

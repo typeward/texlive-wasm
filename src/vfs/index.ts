@@ -23,18 +23,29 @@ import { createFetchFs } from './fetchfs';
 export async function defaultBackends(_id: EngineId, config: EngineConfig): Promise<VfsBackend[]> {
   const layers: VfsBackend[] = [];
 
-  // Always at least try BundleFS — even an "empty" core bundle keeps the
-  // engine from immediately falling through to the network on every read.
+  // BundleFS when a manifest names a core bundle — keeps the engine from
+  // immediately falling through to the network on every read.
   if (config.manifestUrl) {
     layers.push(await createBundleFs({ manifestUrl: config.manifestUrl }));
   }
 
+  let opfs: Awaited<ReturnType<typeof createOpfsFs>> | null = null;
   if (isOpfsAvailable()) {
-    layers.push(await createOpfsFs(config.manifestUrl ? { manifestUrl: config.manifestUrl } : {}));
+    opfs = await createOpfsFs();
+    layers.push(opfs);
   }
 
   if (config.cdnBaseUrl) {
-    layers.push(createFetchFs({ cdnBaseUrl: config.cdnBaseUrl }));
+    layers.push(
+      createFetchFs({
+        cdnBaseUrl: config.cdnBaseUrl,
+        // Write-through: CDN hits are persisted into the OPFS cdn/ tier so
+        // the next session reads them locally.
+        ...(opfs
+          ? { onFetched: (tdsPath: string, bytes: Uint8Array) => opfs.write(tdsPath, bytes) }
+          : {}),
+      }),
+    );
   }
 
   return layers;

@@ -56,10 +56,20 @@ echo "[+] staging updmap-generated font maps..."
 # not shipped in texmf-dist. Without pdftex.map, pdfTeX ships all pages and
 # then dies at PDF finalization ("cannot open font map file" → no fonts to
 # embed → "Fatal error occurred, no output PDF file produced").
+# -L dereferences: the canonical names (pdftex.map → pdftex_dl14.map) are
+# symlinks on Ubuntu, and the symlink cleanup below deletes ALL symlinks.
 mkdir -p /workspace/engine-artifacts/texmf/fonts/map
 if [ -d /var/lib/texmf/fonts/map ]; then
-  cp -rn /var/lib/texmf/fonts/map/. /workspace/engine-artifacts/texmf/fonts/map/ 2>/dev/null || true
+  cp -rnL /var/lib/texmf/fonts/map/. /workspace/engine-artifacts/texmf/fonts/map/ 2>/dev/null || true
 fi
+MAPS=/workspace/engine-artifacts/texmf/fonts/map
+if [ ! -f "$MAPS/pdftex/updmap/pdftex.map" ] && [ -f "$MAPS/pdftex/updmap/pdftex_dl14.map" ]; then
+  cp "$MAPS/pdftex/updmap/pdftex_dl14.map" "$MAPS/pdftex/updmap/pdftex.map"
+fi
+if [ ! -f "$MAPS/dvips/updmap/psfonts.map" ] && [ -f "$MAPS/dvips/updmap/psfonts_t1.map" ]; then
+  cp "$MAPS/dvips/updmap/psfonts_t1.map" "$MAPS/dvips/updmap/psfonts.map"
+fi
+ls -la "$MAPS/pdftex/updmap/" || true
 echo "[+] removing broken symlinks..."
 find /workspace/engine-artifacts/texmf -type l -delete
 # Wipe any leftover ls-R that points to the distro path.

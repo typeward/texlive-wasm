@@ -37,8 +37,6 @@ apt-get install -qq -y --no-install-recommends \
   texlive-xetex \
   texlive-luatex \
   texlive-science \
-  texlive-publishers \
-  texlive-bibtex-extra \
   texlive-pictures \
   lmodern \
   fonts-lmodern \
@@ -66,7 +64,8 @@ echo "[+] trimming assets unusable in the WASM/PDF-only build..."
 #   scripts/citation-style-language  biblatex CSL backend, needs biber
 #   scripts/*        Perl/Java tools requiring fork
 #   tex4ht/source/texdoc/texdoctk/metapost/metafont/mft/xdvi  tools we do not ship
-rm -rf /workspace/engine-artifacts/texmf/fonts/source \
+rm -rf /workspace/engine-artifacts/texmf/doc \
+       /workspace/engine-artifacts/texmf/fonts/source \
        /workspace/engine-artifacts/texmf/fonts/afm \
        /workspace/engine-artifacts/texmf/fonts/type1/public/cbfonts \
        /workspace/engine-artifacts/texmf/fonts/tfm/public/cbfonts \

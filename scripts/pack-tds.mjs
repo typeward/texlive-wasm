@@ -4,7 +4,7 @@
  * runtime download + decompression.
  *
  * Output:
- *   engine-artifacts/texmf.tar.gz   gzip-9 (~28 MB; universal browser support)
+ *   engine-artifacts/texmf.tar.gz   gzip-9 (size tracks the fetch-tds.sh package set)
  *   engine-artifacts/texmf.tar.br   brotli-11 (~18 MB; Chrome 121+/FF 127+)
  *
  * The tar is written by a minimal pure-JS USTAR writer (sorted entries,

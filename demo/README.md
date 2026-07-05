@@ -17,7 +17,7 @@ The app fetches everything from `core/` next to `index.html`:
 ```
 core/
 ├── <engine>/emscripten/<engine>.{js,wasm}   # per engine, lazy
-├── texmf.tar.gz                             # TeX tree incl. rebuilt .fmt files (~28 MB)
+├── texmf.tar.gz                             # TeX tree incl. rebuilt .fmt files (tens of MB, set by fetch-tds.sh)
 └── icudt78l.dat                             # ICU data (xelatex + bibtexu only, ~21 MB)
 ```
 

@@ -52,8 +52,9 @@ export function AboutTab() {
       <h3 style={{ margin: '20px 0 8px 0' }}>What gets downloaded</h3>
       <ul style={{ 'font-size': '14px', color: '#444', 'padding-left': '20px' }}>
         <li>
-          A ~28 MB gzipped TeX tree (<code>texmf.tar.gz</code>: LaTeX packages, fonts, formats) —
-          fetched once, shared by every engine via the browser HTTP cache.
+          A gzipped TeX tree (<code>texmf.tar.gz</code>: LaTeX packages, fonts, formats) — the
+          status bar shows the exact size; fetched once and shared by every engine via the
+          browser HTTP cache.
         </li>
         <li>The engine you use, on demand (sizes above).</li>
         <li>

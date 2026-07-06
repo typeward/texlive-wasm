@@ -131,6 +131,10 @@ for d in /workspace/engine-artifacts/texmf/tex/latex/biblatex-*; do
   esac
 done
 echo "[+] verifying bibliography payload (biblatex + CSL)..."
+echo "[debug] dpkg: $(dpkg-query -W texlive-bibtex-extra 2>&1 || true)"
+echo "[debug] source tree: $(ls /usr/share/texlive/texmf-dist/tex/latex/biblatex/ 2>&1 | head -3 | tr "\n" " " || true)"
+echo "[debug] source size: $(du -sh /usr/share/texlive/texmf-dist 2>/dev/null | cut -f1)"
+echo "[debug] staged: $(ls /workspace/engine-artifacts/texmf/tex/latex/ 2>/dev/null | grep -iE "biblatex|logreq|citation" | tr "\n" " " || echo none)"
 # Fail loudly if the texlive-bibtex-extra payload changes shape — every one
 # of these is load-bearing for latexmk's biblatex/CSL support.
 for f in \

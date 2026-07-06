@@ -10,7 +10,7 @@ from the same C sources, with one `.wasm` per engine.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Live demo](https://img.shields.io/badge/live%20demo-typeward.github.io%2Ftexlive--wasm-2f3e55)](https://typeward.github.io/texlive-wasm/)
 
-**[Try it in your browser →](https://typeward.github.io/texlive-wasm/)** — all six
+**[Try it in your browser →](https://typeward.github.io/texlive-wasm/)** — all seven
 engines, compiled client-side, no server.
 
 ## Engines
@@ -24,6 +24,7 @@ commit `fb61589266`):
 | XeLaTeX         | `xelatex.wasm`            | 2.8 MB  | instantiates; ICU 78.2 wired                                          |
 | LuaLaTeX        | `lualatex.wasm`           | 4.8 MB  | LuaHBTeX 1.24.0 instantiates                                          |
 | BibTeXu         | `bibtexu.wasm`            | 877 KB  | runs                                                                  |
+| biber           | `biber.wasm` (+14 MB VFS) | 9.1 MB  | biber 2.19 on Perl 5.42 — `.bbl` output byte-identical to native      |
 | xdvipdfmx       | `xdvipdfmx.wasm`          | 765 KB  | instantiates                                                          |
 | makeindex       | `makeindex.wasm`          | 192 KB  | instantiates                                                          |
 | pdfLaTeX (WASI) | `pdflatex.wasm` (wasi-sdk)| 2.0 MB  | Node / Wasmtime / edge — build locally; not in published releases yet |

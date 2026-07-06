@@ -28,6 +28,26 @@ PERL_URLS=(
   "https://cpan.metacpan.org/src/5.0/perl-$PERL_VERSION.tar.gz"
 )
 
+# Step-2 XS payload. CPAN pins verified byte-identical across cpan.org and
+# metacpan; libxml2 verified against GNOME's published .sha256sum.
+LIBXML2_VERSION=2.13.8
+LIBXML2_SHA256=277294cb33119ab71b2bc81f2f445e9bc9435b893ad15bb2cd2b0e859a0ee84a
+LIBXML2_URLS=(
+  "https://download.gnome.org/sources/libxml2/2.13/libxml2-$LIBXML2_VERSION.tar.xz"
+)
+TEXTBIBTEX_VERSION=0.91
+TEXTBIBTEX_SHA256=3f0113cf8fe71dc7484636dc8e2a581637ecbcc82d0be29bbd46d0bf3f8cdb37
+TEXTBIBTEX_URLS=(
+  "https://cpan.metacpan.org/authors/id/A/AM/AMBS/Text-BibTeX-$TEXTBIBTEX_VERSION.tar.gz"
+  "https://www.cpan.org/authors/id/A/AM/AMBS/Text-BibTeX-$TEXTBIBTEX_VERSION.tar.gz"
+)
+XMLLIBXML_VERSION=2.0210
+XMLLIBXML_SHA256=a29bf3f00ab9c9ee04218154e0afc8f799bf23674eb99c1a9ed4de1f4059a48d
+XMLLIBXML_URLS=(
+  "https://cpan.metacpan.org/authors/id/S/SH/SHLOMIF/XML-LibXML-$XMLLIBXML_VERSION.tar.gz"
+  "https://www.cpan.org/authors/id/S/SH/SHLOMIF/XML-LibXML-$XMLLIBXML_VERSION.tar.gz"
+)
+
 mkdir -p "$BUILD"
 TARBALL="$BUILD/perl-$PERL_VERSION.tar.gz"
 
@@ -64,6 +84,45 @@ stage_cross() {
   tar -xzf "$TARBALL" -C "$dir" --strip-components=1
   cd "$dir"
 
+  # Step-2 XS dists ride along whenever their tarballs have been fetched
+  # (stage xs-fetch) — Configure only picks up ext/ members present at
+  # Configure time, and this stage wipes the tree.
+  local tb="$BUILD/Text-BibTeX-$TEXTBIBTEX_VERSION.tar.gz"
+  if [ -f "$tb" ]; then
+    local tbtmp
+    tbtmp=$(mktemp -d)
+    tar -xzf "$tb" -C "$tbtmp" --strip-components=1
+    # Flatten to the shape Makefile.PL.text-bibtex expects (see its header):
+    # btparse C + XS glue in the root, pccts as a subdir with its config.h
+    # renamed so it can never shadow perl's own config.h.
+    local ext=ext/Text-BibTeX
+    mkdir -p "$ext/pccts" "$ext/lib"
+    cp "$tbtmp"/btparse/src/*.c "$tbtmp"/btparse/src/*.h "$ext/"
+    cp "$tbtmp"/xscode/BibTeX.xs "$tbtmp"/xscode/btxs_support.* "$ext/"
+    cp "$tbtmp"/typemap "$ext/"
+    cp -r "$tbtmp"/lib/. "$ext/lib/"
+    cp "$tbtmp"/btparse/pccts/*.h "$tbtmp"/btparse/pccts/ast.c "$ext/pccts/"
+    mv "$ext/pccts/config.h" "$ext/pccts/pccts_config.h"
+    # The ANTLR-generated parser in the root includes "config.h" too.
+    sed -i 's/"config\.h"/"pccts_config.h"/' "$ext"/pccts/*.h "$ext"/pccts/ast.c "$ext"/*.c
+    rm -f "$ext/bt_config.h.in"
+    cp "$SCRIPTS/bt_config.h" "$ext/"
+    cp "$SCRIPTS/Makefile.PL.text-bibtex" "$ext/Makefile.PL"
+    rm -rf "$tbtmp"
+    echo "==> [cross] staged ext/Text-BibTeX (flattened static layout)"
+  fi
+  local xl="$BUILD/XML-LibXML-$XMLLIBXML_VERSION.tar.gz"
+  if [ -f "$xl" ]; then
+    mkdir -p ext/XML-LibXML
+    tar -xzf "$xl" -C ext/XML-LibXML --strip-components=1
+    echo "==> [cross] staged ext/XML-LibXML"
+  fi
+  # XML::LibXML's Makefile.PL locates libxml2 through xml2-config.
+  if [ -x "$BUILD/wasm-libs/libxml2/bin/xml2-config" ]; then
+    export PATH="$BUILD/wasm-libs/libxml2/bin:$PATH"
+    export XMLPREFIX="$BUILD/wasm-libs/libxml2"
+  fi
+
   # Install our hints with paths substituted. Configure's probes run on the
   # BUILD HOST (perlcc try.c trick) and several of them OVERRIDE hint values
   # with glibc answers (d_perl_lc_all_uses_name_value_pairs bit us first) —
@@ -97,6 +156,48 @@ stage_cross() {
   ls -la perl libperl.a 2>/dev/null || ls -la miniperl* libperl* 2>/dev/null || true
 }
 
+stage_libxml2() {
+  local dir="$BUILD/libxml2-src"
+  local out="$BUILD/wasm-libs/libxml2"
+  if [ -f "$out/lib/libxml2.a" ]; then
+    echo "==> [libxml2] up to date"; return 0
+  fi
+  local tarball="$BUILD/libxml2-$LIBXML2_VERSION.tar.xz"
+  [ -f "$tarball" ] || bash "$ROOT/scripts/fetch-verify.sh" "$tarball" "$LIBXML2_SHA256" "${LIBXML2_URLS[@]}"
+  rm -rf "$dir" && mkdir -p "$dir" "$out"
+  tar -xJf "$tarball" -C "$dir" --strip-components=1
+  cd "$dir"
+  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1
+  # UTF-8-only documents (.bcf control files): no iconv/icu, no python, no
+  # compression, no threads. Static archive for the perl link.
+  emconfigure ./configure --host=wasm32-emscripten --prefix="$out" \
+    --disable-shared --enable-static --without-python --without-zlib \
+    --without-lzma --without-iconv --with-icu=no --without-threads \
+    --without-debug > configure.log 2>&1 || { tail -20 configure.log; exit 1; }
+  emmake make -j"$NPROC" install > make.log 2>&1 || { tail -20 make.log; exit 1; }
+  echo "==> [libxml2] $(ls -la "$out/lib/libxml2.a" | awk '{print $5}') bytes"
+}
+
+# Fetch the step-2 XS dist tarballs; stage cross unpacks them into the
+# perl tree's ext/ (Configure only sees ext/ members present at Configure
+# time, and cross wipes the tree — so staging lives there).
+stage_xs_fetch() {
+  local tb="$BUILD/Text-BibTeX-$TEXTBIBTEX_VERSION.tar.gz"
+  [ -f "$tb" ] || bash "$ROOT/scripts/fetch-verify.sh" "$tb" "$TEXTBIBTEX_SHA256" "${TEXTBIBTEX_URLS[@]}"
+  local xl="$BUILD/XML-LibXML-$XMLLIBXML_VERSION.tar.gz"
+  [ -f "$xl" ] || bash "$ROOT/scripts/fetch-verify.sh" "$xl" "$XMLLIBXML_SHA256" "${XMLLIBXML_URLS[@]}"
+  echo "==> [xs] tarballs fetched; run stage cross to build them in"
+}
+
+stage_xs_smoke() {
+  cd "$BUILD/perl-emcc-src"
+  cp -f perl perl.cjs
+  echo "==> [xs-smoke] XML::LibXML parses a .bcf-ish document"
+  node perl.cjs -Ilib -e 'use XML::LibXML; my $doc = XML::LibXML->load_xml(string => q{<bcf:controlfile xmlns:bcf="https://sourceforge.net/projects/biblatex"><bcf:datamodel><bcf:entrytype>article</bcf:entrytype></bcf:datamodel></bcf:controlfile>}); my ($n) = $doc->documentElement->getElementsByTagName("bcf:entrytype"); print "bcf ok: ", $n->textContent, "\n"'
+  echo "==> [xs-smoke] Text::BibTeX parses a .bib entry"
+  node perl.cjs -Ilib -e 'use Text::BibTeX; my $e = Text::BibTeX::Entry->new({ binmode => "utf-8" }); $e->parse_s(q{@book{knuth, author = {Donald E. Knuth}, title = {TAOCP}}}); print "bib ok: ", $e->get("author"), "\n"'
+}
+
 stage_smoke() {
   cd "$BUILD/perl-emcc-src"
   # Extensionless emcc glue confuses Node's CJS/ESM guesser — run via .cjs.
@@ -117,9 +218,12 @@ stage_smoke() {
 }
 
 case "$STAGE" in
-  native) stage_native ;;
-  cross)  stage_cross ;;
-  smoke)  stage_smoke ;;
-  all)    stage_native && stage_cross && stage_smoke ;;
-  *) echo "unknown stage: $STAGE (native|cross|smoke|all)" >&2; exit 1 ;;
+  native)   stage_native ;;
+  cross)    stage_cross ;;
+  smoke)    stage_smoke ;;
+  libxml2)  stage_libxml2 ;;
+  xs-fetch) stage_xs_fetch ;;
+  xs-smoke) stage_xs_smoke ;;
+  all)      stage_native && stage_cross && stage_smoke ;;
+  *) echo "unknown stage: $STAGE (native|cross|smoke|libxml2|xs-fetch|xs-smoke|all)" >&2; exit 1 ;;
 esac

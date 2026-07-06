@@ -1,0 +1,22 @@
+# Override Makefile.PL for building Text::BibTeX as a STATIC perl extension.
+#
+# The upstream dist is Module::Build + Config::AutoConf + ExtUtils::LibBuilder
+# and builds btparse as a SHARED library — none of which can work inside a
+# cross-compiled static perl. The spike staging (spike-build.sh) flattens
+# btparse/src/*.c + xscode/* into this directory, keeps btparse/pccts as a
+# subdir (its config.h is renamed pccts_config.h so it can never shadow
+# perl's config.h), and drops in a static bt_config.h. This Makefile.PL then
+# just compiles everything into one extension archive.
+use ExtUtils::MakeMaker;
+
+my @c = grep { $_ ne 'BibTeX.c' } glob('*.c');
+push @c, 'pccts/ast.c';
+my $objects = join ' ', 'BibTeX$(OBJ_EXT)', map { s/\.c$/\$(OBJ_EXT)/r } @c;
+
+WriteMakefile(
+    NAME         => 'Text::BibTeX',
+    VERSION_FROM => 'lib/Text/BibTeX.pm',
+    OBJECT       => $objects,
+    INC          => '-I. -Ipccts',
+    XS           => { 'BibTeX.xs' => 'BibTeX.c' },
+);

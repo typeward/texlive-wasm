@@ -372,6 +372,47 @@ stage_biber_smoke() {
   echo "    (exit $?)"
 }
 
+# Step 4: authentic .bcf (made by OUR pdflatex.wasm) → wasm biber → .bbl,
+# byte-diffed against native biber, timed against the spike criteria.
+stage_roundtrip() {
+  local rt="$BUILD/roundtrip"
+  rm -rf "$rt" && mkdir -p "$rt"
+  node "$SCRIPTS/gen-bcf.mjs" "$rt"
+
+  cd "$BUILD/perl-emcc-src"
+  cp -f perl perl.cjs
+  echo "==> [roundtrip] wasm biber run"
+  local t0 t1
+  t0=$(date +%s%N)
+  set +e
+  node perl.cjs -Ilib "-I$BUILD/purelib/lib/perl5" "-I$BUILD/biber-dist/lib" \
+    "$BUILD/biber-dist/bin/biber" --noconf --input-directory "$rt" \
+    --output-directory "$rt" --output-file test-wasm.bbl test 2>&1 | tail -8
+  local rc=$?
+  set -e
+  t1=$(date +%s%N)
+  echo "==> [roundtrip] wasm biber: exit=$rc, $(( (t1 - t0) / 1000000 )) ms"
+  [ -s "$rt/test-wasm.bbl" ] || { echo "no .bbl produced" >&2; exit 1; }
+
+  echo "==> [roundtrip] native biber (golden reference)"
+  if ! command -v biber >/dev/null 2>&1; then
+    apt-get update -qq >/dev/null 2>&1
+    apt-get install -qq -y --no-install-recommends biber >/dev/null 2>&1
+  fi
+  (cd "$rt" && biber --noconf --output-file test-native.bbl test >/dev/null 2>&1) || true
+  if [ -s "$rt/test-native.bbl" ]; then
+    if diff -q "$rt/test-wasm.bbl" "$rt/test-native.bbl" >/dev/null; then
+      echo "==> [roundtrip] .bbl IDENTICAL to native biber"
+    else
+      echo "==> [roundtrip] .bbl differs from native ($(diff "$rt/test-wasm.bbl" "$rt/test-native.bbl" | wc -l) diff lines; native is $(biber --version))"
+      diff "$rt/test-wasm.bbl" "$rt/test-native.bbl" | head -20
+    fi
+  else
+    echo "==> [roundtrip] native biber unavailable — skipping diff"
+  fi
+  echo "==> [roundtrip] sizes: perl.wasm $(stat -c%s perl.wasm) bytes, purelib $(du -sh "$BUILD/purelib" | cut -f1), biber-dist $(du -sh "$BUILD/biber-dist" | cut -f1)"
+}
+
 stage_xs_smoke() {
   cd "$BUILD/perl-emcc-src"
   cp -f perl perl.cjs
@@ -411,6 +452,7 @@ case "$STAGE" in
   xs-smoke)    stage_xs_smoke ;;
   biber)       stage_biber ;;
   biber-smoke) stage_biber_smoke ;;
+  roundtrip)   stage_roundtrip ;;
   all)         stage_native && stage_cross && stage_smoke ;;
   *) echo "unknown stage: $STAGE (native|purelib|cross|smoke|libxml2|xs-fetch|xs-smoke|biber|biber-smoke|all)" >&2; exit 1 ;;
 esac

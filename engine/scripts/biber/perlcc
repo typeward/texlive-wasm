@@ -45,6 +45,6 @@ fi
 link_flags=()
 case " $* " in
   *" -c "*) ;;
-  *) link_flags=(-sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=67108864) ;;
+  *) link_flags=(-sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=67108864 -sSTACK_SIZE=8388608) ;;
 esac
 exec emcc -sSUPPORT_LONGJMP=emscripten "${link_flags[@]}" "$@"

@@ -25,6 +25,10 @@ fi
 echo "Fetching minimal TDS via ubuntu:24.04 + texlive-latex-* packages..."
 mkdir -p "$TARGET"
 
+# NOTE: the container script below is ONE single-quoted string. An apostrophe
+# anywhere inside it (even in a comment) silently truncates the container
+# script and hands the rest to the HOST shell — which is exactly how a
+# "missing biblatex.sty" wild-goose chase happened. No apostrophes!
 docker run --rm -v "$REPO_ROOT:/workspace" ubuntu:24.04 bash -c '
 set -e
 export DEBIAN_FRONTEND=noninteractive
@@ -149,7 +153,7 @@ echo "[debug] staged dir: $(ls /workspace/engine-artifacts/texmf/tex/latex/bibla
 echo "[debug] sty anywhere staged: $(find /workspace/engine-artifacts/texmf -name biblatex.sty 2>/dev/null | head -2 | tr "\n" " " || true)"
 echo "[debug] dpkg -L: $(dpkg -L texlive-bibtex-extra 2>/dev/null | grep -m1 "biblatex\.sty" || echo "NOT IN PACKAGE MANIFEST")"
 # Fail loudly if the texlive-bibtex-extra payload changes shape — every one
-# of these is load-bearing for latexmk's biblatex/CSL support.
+# of these is load-bearing for the latexmk biblatex/CSL support.
 for f in \
   tex/latex/biblatex/biblatex.sty \
   bibtex/bst/biblatex/biblatex.bst \

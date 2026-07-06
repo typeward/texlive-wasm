@@ -24,6 +24,8 @@
 import * as Comlink from 'comlink';
 import type { EngineConfig, EngineId, RunOptions, RunResult, VfsBackend } from './types';
 import { createBundleFs } from '../vfs/bundlefs';
+import { loadManifest } from './manifest';
+import { buildLsR } from './lsr';
 
 /** Cloneable capability descriptor for one VFS backend. */
 export interface BackendMeta {
@@ -113,9 +115,31 @@ class WorkerImpl implements WorkerApi {
   private config: EngineConfig | null = null;
   private backends: VfsBackend[] = [];
   private glueFactory: ModuleFactory | null = null;
+  /**
+   * The wasm compiled ONCE per worker. Every run needs a fresh Emscripten
+   * *instance* (engines aren't reentrant), but without this cache the glue
+   * re-fetches and re-compiles the multi-MB binary each time — WKWebView
+   * has no wasm code cache, so on iOS that's a full compile per run.
+   * null → the glue manages its own loading (fallback).
+   */
+  private wasmModule: WebAssembly.Module | null = null;
   private icuData: Uint8Array | null = null;
   /** TDS-relative path → bytes; repopulated into every fresh instance. */
   private tdsFiles = new Map<string, Uint8Array>();
+  /**
+   * /tmp/texmf-var contents harvested after each run and re-seeded into the
+   * next fresh instance — luaotfload's font-name database alone is worth
+   * multi-second rebuilds otherwise. Worker-scoped, so it can never outlive
+   * the TDS it was built from (a TDS change means a new worker + init()).
+   */
+  private varFiles = new Map<string, Uint8Array>();
+  /**
+   * basename → full TDS paths, built from the manifest (config.manifestUrl).
+   * The lazy-fetch retry resolves log-reported names ("lmodern.sty") to
+   * exact backend paths through this instead of guessing locations; the
+   * guessing heuristic stays as fallback for unindexed names.
+   */
+  private nameIndex = new Map<string, string[]>();
   // Stable sinks bound at module-factory time. Emscripten's glue captures
   // print/printErr into internal out/err ONCE at instantiation — reassigning
   // module.print afterwards has no effect, so the closures must stay fixed
@@ -146,6 +170,20 @@ class WorkerImpl implements WorkerApi {
       (await import(/* @vite-ignore */ glueUrl)) as { default: ModuleFactory }
     ).default;
 
+    // Compile the wasm once up front (see wasmModule doc). Any failure —
+    // exotic URL scheme, missing CORS, Node file:// — falls back to the
+    // glue's own loader, which is correct just slower.
+    if (this.config.enginePath) {
+      try {
+        const r = await fetch(this.config.enginePath);
+        if (r.ok) {
+          this.wasmModule = await WebAssembly.compile(await r.arrayBuffer());
+        }
+      } catch {
+        this.wasmModule = null;
+      }
+    }
+
     this.icuData = opts.icuData ?? null;
     if (!this.icuData && opts.config.icuDataUrl) {
       const r = await fetch(opts.config.icuDataUrl);
@@ -166,6 +204,22 @@ class WorkerImpl implements WorkerApi {
         if (bytes) this.tdsFiles.set(stripLeadingSlash(tdsPath), bytes);
       }
     }
+
+    // Optional precise-resolution index for the lazy-fetch retry. Failure is
+    // non-fatal: the heuristic resolver still works, just less precisely.
+    if (opts.config.manifestUrl) {
+      try {
+        const manifest = await loadManifest(opts.config.manifestUrl);
+        for (const path of Object.keys(manifest.files)) {
+          const name = path.slice(path.lastIndexOf('/') + 1);
+          const existing = this.nameIndex.get(name);
+          if (existing) existing.push(path);
+          else this.nameIndex.set(name, [path]);
+        }
+      } catch {
+        this.nameIndex.clear();
+      }
+    }
   }
 
   /** Build a fresh engine instance with the TDS + ICU state applied. */
@@ -173,6 +227,7 @@ class WorkerImpl implements WorkerApi {
     if (!this.engineId || !this.glueFactory) {
       throw new Error('Worker.init() must be called before run()');
     }
+    const cachedModule = this.wasmModule;
     const module = await this.glueFactory({
       noInitialRun: true,
       thisProgram: `/bin/${this.engineId}`,
@@ -182,6 +237,21 @@ class WorkerImpl implements WorkerApi {
       printErr: (line: string) => {
         this.stderrBuf += line + '\n';
       },
+      // Instantiate from the worker-cached Module instead of letting the
+      // glue re-fetch + re-compile the binary for every fresh instance.
+      ...(cachedModule
+        ? {
+            instantiateWasm: (
+              imports: WebAssembly.Imports,
+              done: (instance: WebAssembly.Instance, module?: WebAssembly.Module) => void,
+            ) => {
+              void WebAssembly.instantiate(cachedModule, imports).then((instance) =>
+                done(instance, cachedModule),
+              );
+              return {}; // async instantiation — exports arrive via done()
+            },
+          }
+        : {}),
     });
 
     if (this.icuData && module._udata_setCommonData_78) {
@@ -202,8 +272,14 @@ class WorkerImpl implements WorkerApi {
     if (!pathExists(FS, '/tmp')) FS.mkdir('/tmp');
     dirs.add('/tmp');
     // Writable cache root for luaotfload and friends (see TEXMFVAR/
-    // TEXMFCACHE -cnf-line args in run()).
+    // TEXMFCACHE -cnf-line args in run()); re-seed the caches harvested
+    // from previous runs so they don't get rebuilt from scratch.
     mkdirCached(FS, '/tmp/texmf-var', dirs);
+    for (const [rel, bytes] of this.varFiles) {
+      const absolute = `/tmp/texmf-var/${rel}`;
+      mkdirCached(FS, dirname(absolute), dirs);
+      FS.writeFile(absolute, bytes);
+    }
     mkdirCached(FS, '/texmf-dist', dirs);
 
     for (const [tdsPath, bytes] of this.tdsFiles) {
@@ -211,6 +287,11 @@ class WorkerImpl implements WorkerApi {
       mkdirCached(FS, dirname(absolute), dirs);
       FS.writeFile(absolute, bytes);
     }
+    // Regenerate the kpathsea filename database from what is ACTUALLY in
+    // the map — any bundled ls-R is stale the moment the lazy-fetch retry
+    // adds a file, and with $TEXMFDBS set the db is authoritative. Keeping
+    // it exact turns every `//` search into an O(1) db hit.
+    FS.writeFile('/texmf-dist/ls-R', buildLsR(this.tdsFiles.keys()));
     return module;
   }
 
@@ -222,9 +303,12 @@ class WorkerImpl implements WorkerApi {
 
     // On-miss lazy fetch: a hard "I can't find file X" fails the compile;
     // we parse those out of the .log, pull the files from the backends into
-    // the TDS map, and re-run ONCE — on a fresh instance, like every run.
-    const lazyFetch = opts.lazyFetch !== false;
-    const maxRetries = lazyFetch ? 1 : 0;
+    // the TDS map, and re-run — on a fresh instance, like every run. One
+    // retry resolves everything a nonstopmode pass reported; raise
+    // maxRetries when packages pull in further missing files transitively
+    // (cheap with local backends like TauriFS).
+    const lazy = opts.lazyFetch ?? true;
+    const maxRetries = lazy === false ? 0 : lazy === true ? 1 : Math.max(0, lazy.maxRetries ?? 1);
     let exitCode = 0;
     let retriesUsed = 0;
     let stdout = '';
@@ -271,6 +355,17 @@ class WorkerImpl implements WorkerApi {
       collectFiles(FS, '/project', '', outputs);
       log = findLog(FS, opts.args);
 
+      // Harvest engine-written caches (luaotfload font db, etc.) for the
+      // next instance — even failed compiles usually completed the cache
+      // build, so harvest unconditionally.
+      if (this.config?.persistTexmfVar !== false) {
+        try {
+          collectFiles(FS, '/tmp/texmf-var', '', this.varFiles);
+        } catch {
+          // A run that never touched the cache dir is fine.
+        }
+      }
+
       if (exitCode === 0 || attempt === maxRetries) break;
 
       const missing = parseMissingFiles(log);
@@ -311,6 +406,10 @@ class WorkerImpl implements WorkerApi {
       // permitted" (verified against the real engine).
       '-cnf-line=TEXMFVAR=/tmp/texmf-var',
       '-cnf-line=TEXMFCACHE=/tmp/texmf-var',
+      // The ls-R we regenerate per instance is exact, so db lookups are
+      // authoritative and every recursive `//` search below becomes a hash
+      // hit instead of a MEMFS directory walk.
+      '-cnf-line=TEXMFDBS=/texmf-dist',
       '-cnf-line=TEXINPUTS=.;/texmf-dist/tex//',
       '-cnf-line=TFMFONTS=/texmf-dist/fonts/tfm//',
       '-cnf-line=VFFONTS=/texmf-dist/fonts/vf//',
@@ -338,7 +437,9 @@ class WorkerImpl implements WorkerApi {
   private async fetchMissingIntoTds(missing: string[]): Promise<number> {
     let written = 0;
     for (const name of missing) {
-      const candidates = expandMissingName(name);
+      // Exact manifest paths first; heuristic location guessing as fallback.
+      const indexed = name.includes('/') ? [] : (this.nameIndex.get(name) ?? []);
+      const candidates = [...indexed, ...expandMissingName(name)];
       for (const candidate of candidates) {
         let bytes: Uint8Array | null = null;
         for (const backend of this.backends) {
@@ -368,7 +469,9 @@ class WorkerImpl implements WorkerApi {
       await b.dispose?.();
     }
     this.glueFactory = null;
+    this.wasmModule = null;
     this.tdsFiles.clear();
+    this.varFiles.clear();
   }
 
   private resolveEngineGlueUrl(): string {

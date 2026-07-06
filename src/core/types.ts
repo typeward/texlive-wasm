@@ -26,6 +26,13 @@ export interface EngineConfig {
   icuDataUrl?: string;
   /** When supplied, FETCHFS uses this as the CDN base for long-tail packages. */
   cdnBaseUrl?: string;
+  /**
+   * Carry engine-written caches under /tmp/texmf-var (luaotfload's font-name
+   * database, etc.) across runs of the same engine handle. Default: true.
+   * The cache lives in the worker, so it never outlives the TDS it was
+   * built from. Set false to give every run a pristine cache dir.
+   */
+  persistTexmfVar?: boolean;
   /** Whether to use a Web Worker (default: true in browser, false in Node). */
   useWorker?: boolean;
   /** Verbosity for engine stdout/stderr piped through the wrapper. */
@@ -67,9 +74,12 @@ export interface RunOptions {
   /**
    * If true (default), the worker parses missing-file errors out of the .log
    * after a failed compile, asks the VFS backends for those paths, writes
-   * them into MEMFS, and retries the compile once. Set false to disable.
+   * them into MEMFS, and retries the compile once. Set false to disable, or
+   * `{ maxRetries }` to allow more rounds — useful when lazily-fetched
+   * packages `\RequirePackage` further missing files and the backends are
+   * cheap to consult (local TauriFS reads, warm OPFS cache).
    */
-  lazyFetch?: boolean;
+  lazyFetch?: boolean | { maxRetries?: number };
 }
 
 export interface RunResult {

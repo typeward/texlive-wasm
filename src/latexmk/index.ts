@@ -3,10 +3,11 @@
  *
  * Re-implements the small subset of latexmk's logic we actually need:
  *   1. Run the TeX engine.
- *   2. If `bibtex: 'auto'` and the document contains `\bibliography{…}`,
- *      run bibtexu against the .aux. (biblatex documents default to the
- *      biber backend, which we don't ship — pass `bibtex: true` to force
- *      bibtexu for `backend=bibtex` setups.)
+ *   2. If `bibtex: 'auto'` and the document contains classic
+ *      `\bibliography{…}` — or uses biblatex with `backend=bibtex` — run
+ *      bibtexu against the .aux (with biblatex's required `--wolfgang`
+ *      capacity mode in the latter case). biblatex documents on the
+ *      default biber backend are left alone until biber.wasm ships.
  *   3. If `makeindex: 'auto'` and an .idx was produced (or changed), run
  *      makeindex.
  *   4. Re-run the TeX engine until `.aux` stabilizes (max 4 passes) and no
@@ -68,9 +69,14 @@ const RERUN_PATTERNS = [
   /Label\(s\) may have changed/,
   /No file [^.]+\.toc/,
   /Package rerunfilecheck Warning/,
+  // biblatex's generic rerun request (it settles labels/backrefs late).
+  /Please rerun LaTeX/,
 ];
 
 const DEFAULT_MAX_PASSES = 4;
+// biblatex needs an extra settling pass: tex → bibtex → tex → tex is the
+// common case, and backref/label passes can add one more.
+const BIBLATEX_MAX_PASSES = 5;
 
 export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   const stripExt = (p: string) => p.replace(/\.tex$/i, '');
@@ -87,16 +93,20 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   const logs: LogEntry[] = [];
   const isXetex = opts.engine === 'xelatex';
 
+  const biblatexMode = usesBiblatex(opts.files);
+
   const rerunMode = opts.rerun ?? 'auto';
   const maxPasses =
     rerunMode === false
       ? 1
       : typeof rerunMode === 'object'
         ? Math.max(1, rerunMode.maxPasses)
-        : DEFAULT_MAX_PASSES;
+        : biblatexMode
+          ? BIBLATEX_MAX_PASSES
+          : DEFAULT_MAX_PASSES;
 
   // Detect bibtex/makeindex from sources if 'auto'.
-  const needBibtex = resolveAuto(opts.bibtex, () => detectBibtex(opts.files));
+  const needBibtex = resolveAuto(opts.bibtex, () => detectBibtex(opts.files, biblatexMode));
   const needMakeindex = resolveAuto(opts.makeindex, () => detectMakeindex(opts.files));
 
   const texExtraArgs = opts.synctex ? ['-synctex=1'] : [];
@@ -149,7 +159,14 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
       // Bibtex on the first pass that produced an .aux.
       if (pass === 1 && needBibtex && outputs.has(auxPath)) {
         bibtexWrapper ??= new Bibtexu(wrapperConfig(opts, opts.handles?.bibtex));
-        const r = await bibtexWrapper.run({ auxFile: auxPath, files: materialize() });
+        const r = await bibtexWrapper.run({
+          auxFile: auxPath,
+          files: materialize(),
+          // biblatex's aux needs bibtex8's "wolfgang" capacity mode; the
+          // switch is harmless for classic .bst documents but only biblatex
+          // requires it, so keep classic invocations byte-identical.
+          ...(biblatexMode ? { extraArgs: ['--wolfgang'] } : {}),
+        });
         pushLog(`bibtexu ${auxPath}`, r);
         outputs = mergeOutputs(outputs, r.outputs);
         // bibtex exit statuses: 0 spotless, 1 warnings, 2 errors, 3 fatal.
@@ -231,10 +248,43 @@ function contentToString(content: string | Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(content);
 }
 
-function detectBibtex(files: FileInput[]): boolean {
-  // Only classic `\bibliography{…}` — that aux is what bibtexu processes.
-  // biblatex markers (\addbibresource, \printbibliography) default to the
-  // biber backend which we don't ship, so auto mode leaves them alone.
+// Matches \usepackage[opts]{biblatex} / \RequirePackage[opts]{biblatex};
+// character classes match newlines, so multi-line option lists work.
+const BIBLATEX_LOAD = /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{\s*biblatex\s*\}/;
+const BIBLATEX_PASS_OPTS = /\\PassOptionsToPackage\s*\{([^}]*)\}\s*\{\s*biblatex\s*\}/;
+const BACKEND_BIBTEX = /backend\s*=\s*bibtex8?\s*(?:[,\]}]|$)/m;
+
+function usesBiblatex(files: FileInput[]): boolean {
+  return files.some((f) => BIBLATEX_LOAD.test(contentToString(f.content)));
+}
+
+function biblatexBackendIsBibtex(files: FileInput[]): boolean {
+  return files.some((f) => {
+    const text = contentToString(f.content);
+    const load = BIBLATEX_LOAD.exec(text);
+    if (load?.[1] && BACKEND_BIBTEX.test(load[1])) return true;
+    const pass = BIBLATEX_PASS_OPTS.exec(text);
+    return pass?.[1] !== undefined && BACKEND_BIBTEX.test(pass[1]);
+  });
+}
+
+/**
+ * Public preview of latexmk's bibtex auto-detection. Apps that manage their
+ * own EngineHandles (to pass `handles.bibtex` with a configured enginePath)
+ * can ask up front whether a compile will invoke bibtexu, instead of
+ * duplicating the detection heuristics.
+ */
+export function willRunBibtex(files: FileInput[]): boolean {
+  return detectBibtex(files, usesBiblatex(files));
+}
+
+function detectBibtex(files: FileInput[], biblatexMode: boolean): boolean {
+  // biblatex docs: bibtexu can process the aux only for backend=bibtex
+  // setups (biblatex also aliases \bibliography to \addbibresource, so the
+  // classic marker alone must NOT trigger bibtexu on a biber-backend doc).
+  // The default biber backend is left alone until biber.wasm ships.
+  if (biblatexMode) return biblatexBackendIsBibtex(files);
+  // Classic bibtex: `\bibliography{…}` writes the aux bibtexu processes.
   return files.some((f) => contentToString(f.content).includes('\\bibliography{'));
 }
 

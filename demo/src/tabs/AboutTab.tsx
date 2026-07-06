@@ -70,8 +70,10 @@ export function AboutTab() {
           so a tiny service worker injects them — that's the one-time reload on first visit.
         </li>
         <li>
-          biber is not shipped — BibTeXu covers classic <code>\bibliography</code> workflows;
-          biblatex+biber documents won't resolve citations.
+          biblatex works via <code>backend=bibtex</code> (auto-detected; BibTeXu runs with{' '}
+          <code>--wolfgang</code>), and CSL styles run in-engine under LuaLaTeX via citeproc-lua.
+          biber itself is not shipped yet, so documents on the default biber backend won't resolve
+          citations — a biber.wasm port is in progress.
         </li>
         <li>SyncTeX forward/reverse lookups are Phase-4 work (the parser lists input files today).</li>
         <li>Desktop browsers are the target; mobile devices may hit memory limits.</li>

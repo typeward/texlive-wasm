@@ -11,7 +11,7 @@
  */
 
 export { createEngine } from './core/engine';
-export { latexmk } from './latexmk';
+export { latexmk, willRunBibtex } from './latexmk';
 export { PdfLatex } from './engines/pdflatex';
 export { XeLatex } from './engines/xelatex';
 export { LuaLatex } from './engines/lualatex';

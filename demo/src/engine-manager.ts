@@ -4,7 +4,7 @@
  * per-engine Web Workers, exactly as a consumer app would use it.
  */
 
-import { createEngine, latexmk } from 'texlive-wasm';
+import { createEngine, latexmk, willRunBibtex } from 'texlive-wasm';
 import type {
   EngineHandle,
   EngineId,
@@ -155,7 +155,10 @@ export async function compile(req: CompileRequest): Promise<LatexmkResult> {
   await warmTds();
 
   const src = req.files.map((f) => (typeof f.content === 'string' ? f.content : '')).join('\n');
-  const needBib = src.includes('\\bibliography{');
+  // Use the library's own detection (classic \bibliography AND biblatex
+  // backend=bibtex) so the pre-created handle always matches what latexmk
+  // will actually invoke.
+  const needBib = willRunBibtex(req.files);
   const needIdx = src.includes('\\makeindex') || src.includes('\\printindex');
   // Plain documents (no refs/TOC/citations) are done in one pass — skip the
   // aux-stabilization pass latexmk would otherwise spend proving that.

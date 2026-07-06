@@ -33,6 +33,7 @@ apt-get install -qq -y --no-install-recommends \
   texlive-latex-base \
   texlive-latex-recommended \
   texlive-latex-extra \
+  texlive-bibtex-extra \
   texlive-fonts-recommended \
   texlive-xetex \
   texlive-luatex \
@@ -80,9 +81,10 @@ echo "[+] trimming assets unusable in the WASM/PDF-only build..."
 #   fonts/afm        legacy dvips Adobe Font Metric
 #   tex/context      ConTeXt format, not LaTeX
 #   bibtex/bib       sample biblio data shipped inside packages
-#   scripts/citation-style-language  biblatex CSL backend, needs biber
 #   scripts/*        Perl/Java tools requiring fork
 #   tex4ht/source/texdoc/texdoctk/metapost/metafont/mft/xdvi  tools we do not ship
+# Kept on purpose: scripts/citation-style-language + scripts/citeproc-lua —
+# the CSL processor is pure Lua and runs entirely inside lualatex.wasm.
 rm -rf /workspace/engine-artifacts/texmf/doc \
        /workspace/engine-artifacts/texmf/fonts/source \
        /workspace/engine-artifacts/texmf/fonts/afm \
@@ -100,7 +102,6 @@ rm -rf /workspace/engine-artifacts/texmf/doc \
        /workspace/engine-artifacts/texmf/tex/latex/ghsystem \
        /workspace/engine-artifacts/texmf/tex/context \
        /workspace/engine-artifacts/texmf/bibtex/bib \
-       /workspace/engine-artifacts/texmf/scripts/citation-style-language \
        /workspace/engine-artifacts/texmf/scripts/texdoc \
        /workspace/engine-artifacts/texmf/scripts/l3build \
        /workspace/engine-artifacts/texmf/scripts/texlive \
@@ -108,7 +109,6 @@ rm -rf /workspace/engine-artifacts/texmf/doc \
        /workspace/engine-artifacts/texmf/scripts/bib2gls \
        /workspace/engine-artifacts/texmf/scripts/barracuda \
        /workspace/engine-artifacts/texmf/scripts/webquiz \
-       /workspace/engine-artifacts/texmf/scripts/citeproc-lua \
        /workspace/engine-artifacts/texmf/tex4ht \
        /workspace/engine-artifacts/texmf/source \
        /workspace/engine-artifacts/texmf/texdoc \
@@ -117,6 +117,41 @@ rm -rf /workspace/engine-artifacts/texmf/doc \
        /workspace/engine-artifacts/texmf/metafont \
        /workspace/engine-artifacts/texmf/mft \
        /workspace/engine-artifacts/texmf/xdvi 2>/dev/null || true
+echo "[+] trimming biblatex contrib styles to a curated set..."
+# texlive-bibtex-extra ships dozens of tex/latex/biblatex-<style> contrib
+# packages; keep only the widely-used ones (the standard numeric/alphabetic/
+# authoryear families live in biblatex core and always ship). The long tail
+# belongs to the CDN tier, not the base TDS.
+KEEP_BIBLATEX=" biblatex-apa biblatex-chicago biblatex-ieee biblatex-mla biblatex-nature biblatex-phys "
+for d in /workspace/engine-artifacts/texmf/tex/latex/biblatex-*; do
+  [ -d "$d" ] || continue
+  case "$KEEP_BIBLATEX" in
+    *" $(basename "$d") "*) ;;
+    *) rm -rf "$d" ;;
+  esac
+done
+echo "[+] verifying bibliography payload (biblatex + CSL)..."
+# Fail loudly if the texlive-bibtex-extra payload changes shape — every one
+# of these is load-bearing for latexmk's biblatex/CSL support.
+for f in \
+  tex/latex/biblatex/biblatex.sty \
+  bibtex/bst/biblatex/biblatex.bst \
+  tex/latex/logreq/logreq.sty \
+  tex/latex/citation-style-language/citation-style-language.sty \
+  tex/latex/citation-style-language/styles/apa.csl; do
+  if [ ! -e "/workspace/engine-artifacts/texmf/$f" ]; then
+    echo "ERROR: expected $f in the TDS tree (texlive-bibtex-extra layout changed?)" >&2
+    exit 1
+  fi
+done
+# The Lua processor dir name differs across TL snapshots.
+if [ ! -d /workspace/engine-artifacts/texmf/scripts/citation-style-language ] \
+  && [ ! -d /workspace/engine-artifacts/texmf/scripts/citeproc-lua ]; then
+  echo "ERROR: no citeproc-lua scripts directory in the TDS tree" >&2
+  exit 1
+fi
+ls /workspace/engine-artifacts/texmf/tex/latex/citation-style-language/locales/ 2>/dev/null | head -3 \
+  || echo "WARNING: no CSL locales directory — citeproc may fall back to en-US"
 echo "[+] patching texmf.cnf TEXMFROOT for wasm layout..."
 # Distros set TEXMFROOT to an absolute system path (e.g. /usr/share/texlive)
 # that exists on Linux but not inside our WASM virtual FS. Rewrite the root

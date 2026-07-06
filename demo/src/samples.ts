@@ -117,6 +117,85 @@ Knuth's magnum opus~\\cite{KnuthArt} needs no introduction.
   ],
 };
 
+export const BIBLATEX: Sample = {
+  id: 'biblatex',
+  title: 'biblatex (backend=bibtex)',
+  blurb:
+    'Modern biblatex citations with the bibtex backend — latexmk detects backend=bibtex and drives BibTeXu with --wolfgang. UTF-8 authors included.',
+  engine: 'pdflatex',
+  mainTex: 'main.tex',
+  files: [
+    {
+      path: 'main.tex',
+      content: `\\documentclass{article}
+\\usepackage[backend=bibtex, style=authoryear]{biblatex}
+\\addbibresource{refs.bib}
+\\begin{document}
+Citing \\cite{knuth1968} and \\cite{oelsen2020} the biblatex way.
+
+\\printbibliography
+\\end{document}
+`,
+    },
+    {
+      path: 'refs.bib',
+      content: `@book{knuth1968,
+  author    = {Donald E. Knuth},
+  title     = {The Art of Computer Programming},
+  publisher = {Addison-Wesley},
+  year      = {1968},
+}
+@article{oelsen2020,
+  author  = {Ølsen, Kåre and Émile, Fournier},
+  title   = {Unicode Authors Everywhere},
+  journal = {Journal of Reproducible Demos},
+  year    = {2020},
+}
+`,
+    },
+  ],
+};
+
+export const CSL: Sample = {
+  id: 'csl',
+  title: 'CSL styles (citeproc-lua)',
+  blurb:
+    'Citation Style Language: the citeproc processor is pure Lua and runs entirely inside lualatex.wasm — APA here, thousands of styles available.',
+  engine: 'lualatex',
+  mainTex: 'main.tex',
+  files: [
+    {
+      path: 'main.tex',
+      content: `\\documentclass{article}
+\\usepackage[style=apa]{citation-style-language}
+\\addbibresource{refs.bib}
+\\begin{document}
+Citing \\cite{knuth1968} and \\cite{lamport1994}, formatted by
+citeproc-lua running inside the engine.
+
+\\printbibliography
+\\end{document}
+`,
+    },
+    {
+      path: 'refs.bib',
+      content: `@book{knuth1968,
+  author    = {Donald E. Knuth},
+  title     = {The Art of Computer Programming},
+  publisher = {Addison-Wesley},
+  year      = {1968},
+}
+@book{lamport1994,
+  author    = {Leslie Lamport},
+  title     = {LaTeX: A Document Preparation System},
+  publisher = {Addison-Wesley},
+  year      = {1994},
+}
+`,
+    },
+  ],
+};
+
 export const INDEX: Sample = {
   id: 'index',
   title: 'Index (makeindex)',
@@ -244,6 +323,8 @@ export const ALL_SAMPLES: Sample[] = [
   HELLO,
   EXTRAS,
   BIBLIOGRAPHY,
+  BIBLATEX,
+  CSL,
   INDEX,
   RERUN,
   XELATEX,

@@ -192,6 +192,50 @@ describe('latexmk multi-pass orchestration', () => {
     expect(bibtex.calls).toHaveLength(0);
   });
 
+  it('auto-runs bibtexu with --wolfgang for biblatex backend=bibtex documents', async () => {
+    const tex = fakeHandle('pdflatex', ({ n }) => ({
+      outputs: { 'main.aux': 'A', 'main.log': 'clean', 'main.pdf': `P${n}` },
+    }));
+    const bibtex = fakeHandle('bibtexu', () => ({ outputs: { 'main.bbl': 'B' } }));
+    await latexmk({
+      engine: 'pdflatex',
+      mainTex: 'main.tex',
+      files: [
+        {
+          path: 'main.tex',
+          content:
+            '\\usepackage[style=authoryear,\n  backend=bibtex]{biblatex}\n' +
+            '\\addbibresource{refs.bib}\\printbibliography',
+        },
+      ],
+      handles: { tex, bibtex },
+    });
+    expect(bibtex.calls).toHaveLength(1);
+    // biblatex requires bibtex8's wolfgang capacity mode.
+    expect(bibtex.calls[0]!.args).toEqual(['--wolfgang', 'main.aux']);
+  });
+
+  it('leaves biber-backend docs alone even when \\bibliography is used as an alias', async () => {
+    const tex = fakeHandle('pdflatex', () => ({
+      outputs: { 'main.aux': 'A', 'main.log': 'clean', 'main.pdf': 'P' },
+    }));
+    const bibtex = fakeHandle('bibtexu', () => ({}));
+    await latexmk({
+      engine: 'pdflatex',
+      mainTex: 'main.tex',
+      files: [
+        {
+          path: 'main.tex',
+          // biblatex treats \bibliography{...} as an \addbibresource alias —
+          // the classic marker must not trigger bibtexu on a biber-backend doc.
+          content: '\\usepackage[backend=biber]{biblatex}\\bibliography{refs}\\printbibliography',
+        },
+      ],
+      handles: { tex, bibtex },
+    });
+    expect(bibtex.calls).toHaveLength(0);
+  });
+
   it('xelatex: holds the .xdv and finalizes via xdvipdfmx with the full file set', async () => {
     const tex = fakeHandle('xelatex', ({ args }) => {
       // The wrapper must pass --no-pdf (WASM xetex cannot popen xdvipdfmx).

@@ -27,6 +27,7 @@ const SMOKES = [
   ['bibtexu',   'smoke-bibtexu.mjs', false],
   ['makeindex', 'smoke-makeindex.mjs', false],
   ['biblatex',  'smoke-biblatex.mjs', false],
+  ['biber',     'smoke-biber.mjs', false],
   ['csl',       'smoke-csl.mjs', false],
   ['wasi',      'smoke-wasi-compile.mjs', true],
 ];

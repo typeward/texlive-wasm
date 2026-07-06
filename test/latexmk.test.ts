@@ -231,9 +231,67 @@ describe('latexmk multi-pass orchestration', () => {
           content: '\\usepackage[backend=biber]{biblatex}\\bibliography{refs}\\printbibliography',
         },
       ],
+      biber: false, // isolate the bibtex-detection assertion
       handles: { tex, bibtex },
     });
     expect(bibtex.calls).toHaveLength(0);
+  });
+
+  it('auto-runs biber for default-backend biblatex docs when the .bcf appears', async () => {
+    const tex = fakeHandle('pdflatex', ({ n, files }) => {
+      if (n > 1) expect(files.get('main.bbl')).toBe('BBL FROM BIBER');
+      return {
+        outputs: {
+          'main.aux': 'A',
+          'main.bcf': 'BCF CONTENT', // stable across passes → biber runs once
+          'main.log': 'clean',
+          'main.pdf': `P${n}`,
+        },
+      };
+    });
+    const biber = fakeHandle('biber', ({ args, files }) => {
+      // Wrapper argv: perl runs the bundled script, then --noconf + jobname.
+      expect(args).toEqual(['/biber/bin/biber', '--noconf', 'main']);
+      expect(files.get('main.bcf')).toBe('BCF CONTENT');
+      return { outputs: { 'main.bbl': 'BBL FROM BIBER' } };
+    });
+    const result = await latexmk({
+      engine: 'pdflatex',
+      mainTex: 'main.tex',
+      files: [
+        {
+          path: 'main.tex',
+          content: '\\usepackage[style=authoryear]{biblatex}\\addbibresource{r.bib}\\printbibliography',
+        },
+      ],
+      handles: { tex, biber },
+    });
+    expect(biber.calls).toHaveLength(1);
+    expect(result.success).toBe(true);
+    expect(result.passes).toBeGreaterThanOrEqual(2);
+  });
+
+  it('reruns biber when the .bcf changes and aborts on hard errors (>=2)', async () => {
+    const tex = fakeHandle('pdflatex', ({ n }) => ({
+      outputs: {
+        'main.aux': 'A',
+        'main.bcf': `BCF v${n}`, // changes each pass → biber follows until cap
+        'main.log': 'clean',
+        'main.pdf': `P${n}`,
+      },
+    }));
+    const biber = fakeHandle('biber', ({ n }) =>
+      n === 1 ? { outputs: { 'main.bbl': 'B1' } } : { exitCode: 2 },
+    );
+    const result = await latexmk({
+      engine: 'pdflatex',
+      mainTex: 'main.tex',
+      files: [{ path: 'main.tex', content: '\\usepackage{biblatex}\\printbibliography' }],
+      handles: { tex, biber },
+    });
+    expect(biber.calls.length).toBeGreaterThanOrEqual(2);
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(2);
   });
 
   it('xelatex: holds the .xdv and finalizes via xdvipdfmx with the full file set', async () => {

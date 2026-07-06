@@ -4,7 +4,7 @@
  * per-engine Web Workers, exactly as a consumer app would use it.
  */
 
-import { createEngine, latexmk, willRunBibtex } from 'texlive-wasm';
+import { createEngine, latexmk, willRunBibtex, willRunBiber } from 'texlive-wasm';
 import type {
   EngineHandle,
   EngineId,
@@ -23,6 +23,7 @@ export const ENGINE_SIZES: Record<EngineId, string> = {
   bibtexu: '0.9 MB',
   xdvipdfmx: '0.8 MB',
   makeindex: '0.2 MB',
+  biber: '9.1 MB + 14 MB VFS',
 };
 
 /**
@@ -103,7 +104,8 @@ export function getEngine(id: EngineId): Promise<EngineHandle> {
   setEngineStatus(`loading ${id}.wasm (${ENGINE_SIZES[id]}) + unpacking TeX tree…`);
   const promise = createEngine(id, {
     enginePath: coreUrl(`${id}/emscripten/${id}.wasm`),
-    bundleUrl: coreUrl('texmf.tar.gz'),
+    // biber's bundle is its Perl runtime VFS, not the TeX tree.
+    bundleUrl: id === 'biber' ? coreUrl('biber/emscripten/biber-vfs.tar.gz') : coreUrl('texmf.tar.gz'),
     ...(id === 'xelatex' || id === 'bibtexu' ? { icuDataUrl: coreUrl('icudt78l.dat') } : {}),
   }).then((handle) => {
     setEngineStatus(`${id} ready`);
@@ -156,9 +158,10 @@ export async function compile(req: CompileRequest): Promise<LatexmkResult> {
 
   const src = req.files.map((f) => (typeof f.content === 'string' ? f.content : '')).join('\n');
   // Use the library's own detection (classic \bibliography AND biblatex
-  // backend=bibtex) so the pre-created handle always matches what latexmk
-  // will actually invoke.
+  // backend=bibtex vs default-backend biber) so the pre-created handles
+  // always match what latexmk will actually invoke.
   const needBib = willRunBibtex(req.files);
+  const needBiber = willRunBiber(req.files);
   const needIdx = src.includes('\\makeindex') || src.includes('\\printindex');
   // Plain documents (no refs/TOC/citations) are done in one pass — skip the
   // aux-stabilization pass latexmk would otherwise spend proving that.
@@ -167,6 +170,7 @@ export async function compile(req: CompileRequest): Promise<LatexmkResult> {
 
   const involved: EngineId[] = [req.engine];
   if (needBib) involved.push('bibtexu');
+  if (needBiber) involved.push('biber');
   if (needIdx) involved.push('makeindex');
   if (req.engine === 'xelatex') involved.push('xdvipdfmx');
 
@@ -174,6 +178,7 @@ export async function compile(req: CompileRequest): Promise<LatexmkResult> {
     tex: await getEngine(req.engine),
   };
   if (needBib) handles.bibtex = await getEngine('bibtexu');
+  if (needBiber) handles.biber = await getEngine('biber');
   if (needIdx) handles.makeindex = await getEngine('makeindex');
   if (req.engine === 'xelatex') handles.xdvipdfmx = await getEngine('xdvipdfmx');
 
@@ -185,6 +190,7 @@ export async function compile(req: CompileRequest): Promise<LatexmkResult> {
       mainTex: req.mainTex,
       files: req.files,
       bibtex: needBib,
+      biber: needBiber,
       makeindex: needIdx,
       rerun: mayNeedRerun ? 'auto' : false,
       ...(req.synctex ? { synctex: true } : {}),

@@ -156,6 +156,46 @@ Citing \\cite{knuth1968} and \\cite{oelsen2020} the biblatex way.
   ],
 };
 
+export const BIBER: Sample = {
+  id: 'biber',
+  title: 'biblatex + biber (the real thing)',
+  blurb:
+    'Default-backend biblatex: latexmk runs biber.wasm — Perl 5.42 + biber 2.19 compiled to WebAssembly — with true Unicode collation. A first on the web.',
+  engine: 'pdflatex',
+  mainTex: 'main.tex',
+  files: [
+    {
+      path: 'main.tex',
+      content: `\\documentclass{article}
+\\usepackage[style=authoryear]{biblatex}
+\\addbibresource{refs.bib}
+\\begin{document}
+Citing \\cite{knuth1968} and \\cite{oelsen2020} through real biber —
+note the correct Unicode sort order in the bibliography.
+
+\\printbibliography
+\\end{document}
+`,
+    },
+    {
+      path: 'refs.bib',
+      content: `@book{knuth1968,
+  author    = {Donald E. Knuth},
+  title     = {The Art of Computer Programming},
+  publisher = {Addison-Wesley},
+  year      = {1968},
+}
+@article{oelsen2020,
+  author  = {Ølsen, Kåre and Ábel, Tamás},
+  title   = {Unicode Collation Everywhere},
+  journal = {Journal of Reproducible Demos},
+  year    = {2020},
+}
+`,
+    },
+  ],
+};
+
 export const CSL: Sample = {
   id: 'csl',
   title: 'CSL styles (citeproc-lua)',
@@ -324,6 +364,7 @@ export const ALL_SAMPLES: Sample[] = [
   EXTRAS,
   BIBLIOGRAPHY,
   BIBLATEX,
+  BIBER,
   CSL,
   INDEX,
   RERUN,

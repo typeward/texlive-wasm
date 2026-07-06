@@ -28,6 +28,7 @@ import { PdfLatex } from '../engines/pdflatex';
 import { XeLatex } from '../engines/xelatex';
 import { LuaLatex } from '../engines/lualatex';
 import { Bibtexu } from '../engines/bibtexu';
+import { Biber } from '../engines/biber';
 import { Makeindex } from '../engines/makeindex';
 import { Xdvipdfmx } from '../engines/xdvipdfmx';
 
@@ -39,6 +40,13 @@ export interface LatexmkOptions {
   files: FileInput[];
   /** 'auto' (default) inspects the source; true forces; false skips. */
   bibtex?: boolean | 'auto';
+  /**
+   * biber for default-backend biblatex documents. 'auto' (default) runs it
+   * when the sources load biblatex without `backend=bibtex`. Requires a
+   * biber engine handle (or enginePath config) — the artifact is optional
+   * and larger than the others (~10 MB + its VFS bundle).
+   */
+  biber?: boolean | 'auto';
   makeindex?: boolean | 'auto';
   /**
    * Re-run for cross-refs/TOC. 'auto' (default) stops when .aux stabilizes;
@@ -53,6 +61,7 @@ export interface LatexmkOptions {
   handles?: {
     tex?: EngineHandle;
     bibtex?: EngineHandle;
+    biber?: EngineHandle;
     makeindex?: EngineHandle;
     xdvipdfmx?: EngineHandle;
   };
@@ -71,6 +80,7 @@ const RERUN_PATTERNS = [
   /Package rerunfilecheck Warning/,
   // biblatex's generic rerun request (it settles labels/backrefs late).
   /Please rerun LaTeX/,
+  /Please \(re\)run Biber/,
 ];
 
 const DEFAULT_MAX_PASSES = 4;
@@ -84,6 +94,7 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   // even when mainTex lives in a subdirectory — key everything by basename.
   const base = stripExt(opts.mainTex).split('/').pop()!;
   const auxPath = `${base}.aux`;
+  const bcfPath = `${base}.bcf`;
   const idxPath = `${base}.idx`;
   const xdvPath = `${base}.xdv`;
   const pdfPath = `${base}.pdf`;
@@ -105,13 +116,19 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
           ? BIBLATEX_MAX_PASSES
           : DEFAULT_MAX_PASSES;
 
-  // Detect bibtex/makeindex from sources if 'auto'.
+  // Detect bibtex/biber/makeindex from sources if 'auto'.
   const needBibtex = resolveAuto(opts.bibtex, () => detectBibtex(opts.files, biblatexMode));
+  // biber serves default-backend biblatex docs; mutually exclusive with the
+  // bibtex path (backend=bibtex routes through bibtexu instead).
+  const needBiber =
+    !needBibtex &&
+    resolveAuto(opts.biber, () => biblatexMode && !biblatexBackendIsBibtex(opts.files));
   const needMakeindex = resolveAuto(opts.makeindex, () => detectMakeindex(opts.files));
 
   const texExtraArgs = opts.synctex ? ['-synctex=1'] : [];
 
   let lastAux: string | null = null;
+  let lastBcf: string | null = null;
   let lastIdx: string | null = null;
   let pass = 0;
   let exitCode = 0;
@@ -131,6 +148,7 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   // Helper wrappers are created lazily, at most once, and disposed at the
   // end (dispose() is a no-op for wrappers borrowing a caller handle).
   let bibtexWrapper: Bibtexu | null = null;
+  let biberWrapper: Biber | null = null;
   let makeindexWrapper: Makeindex | null = null;
   let xdvipdfmxWrapper: Xdvipdfmx | null = null;
 
@@ -178,6 +196,26 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
         helpersRan = true;
       }
 
+      // Biber whenever the .bcf appeared or changed — biblatex rewrites the
+      // control file when options/citations change; a stable .bcf means
+      // biber's work is already reflected in the .bbl.
+      if (needBiber && outputs.has(bcfPath)) {
+        const bcfNow = bytesToString(outputs.get(bcfPath));
+        if (bcfNow !== lastBcf) {
+          lastBcf = bcfNow;
+          biberWrapper ??= new Biber(wrapperConfig(opts, opts.handles?.biber));
+          const r = await biberWrapper.run({ jobname: base, files: materialize() });
+          pushLog(`biber ${base}`, r);
+          outputs = mergeOutputs(outputs, r.outputs);
+          // biber exits 0 on success (warnings included); >=2 is a hard error.
+          if (r.exitCode >= 2) {
+            exitCode = r.exitCode;
+            break;
+          }
+          helpersRan = true;
+        }
+      }
+
       // Makeindex whenever the .idx appeared or changed.
       if (needMakeindex && outputs.has(idxPath)) {
         const idxNow = bytesToString(outputs.get(idxPath));
@@ -214,7 +252,7 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
     // Wrappers created by this call own their workers; release them. A
     // wrapper wrapping a caller-supplied handle no-ops its dispose().
     await Promise.allSettled(
-      [tex, bibtexWrapper, makeindexWrapper, xdvipdfmxWrapper]
+      [tex, bibtexWrapper, biberWrapper, makeindexWrapper, xdvipdfmxWrapper]
         .filter((w) => w !== null)
         .map((w) => w.dispose()),
     );
@@ -276,6 +314,11 @@ function biblatexBackendIsBibtex(files: FileInput[]): boolean {
  */
 export function willRunBibtex(files: FileInput[]): boolean {
   return detectBibtex(files, usesBiblatex(files));
+}
+
+/** Same preview for biber: default-backend biblatex documents. */
+export function willRunBiber(files: FileInput[]): boolean {
+  return usesBiblatex(files) && !biblatexBackendIsBibtex(files);
 }
 
 function detectBibtex(files: FileInput[], biblatexMode: boolean): boolean {

@@ -12,6 +12,7 @@ Status: **Phase 0 complete, Phase 1 mostly complete (TL 2026).** TS library + CI
 | `bibtexu.wasm` | 877 KB | ✅ "BibTeXu 0.99d-x4.03, ICU 78.2" |
 | `xdvipdfmx.wasm` | 765 KB | ✅ instantiates |
 | `makeindex.wasm` | 192 KB | ✅ instantiates |
+| `biber.wasm` | 9.1 MB (+14 MB VFS) | ✅ "biber version: 2.19" — .bbl byte-identical to native (Perl 5.42 on wasm) |
 | `synctex.wasm` | — | Deferred: synctex is built into each engine, JS parser at `src/synctex/index.ts` suffices |
 
 End-to-end smoke test verified (`scripts/smoke-pdflatex.mjs`): `\documentclass{article}\begin{document}Hello\end{document}` → valid PDF 1.5 (2387 bytes) using our wasm pdflatex + a minimal TeX Live TDS (sourced via `scripts/fetch-tds.sh`).
@@ -44,11 +45,14 @@ See `plan.md` Phase 1 for design and the remaining ICU-data + fontconfig work.
   cannot reliably provide crossOriginIsolated, and nothing in the engines spawns threads —
   so no SharedArrayBuffer, no COOP/COEP, no coi-serviceworker. `ENABLE_THREADS=1` stays as
   an opt-in make knob; CI pins `ENABLE_THREADS=0` and fails on `shared:true` in the glue.
-- **Bibliography (supersedes "Biber: Not shipped"):** biblatex works via `backend=bibtex`
-  (latexmk auto-detects it and runs bibtexu `--wolfgang`); CSL styles run in-engine under
-  lualatex via citeproc-lua. A **biber.wasm port is committed** (Perl 5.40 via perl-cross,
-  static XS, Emscripten; see the biber milestones) — until it ships, default-backend
-  biblatex documents do not resolve citations.
+- **Bibliography (supersedes "Biber: Not shipped"):** the full stack ships. Classic bibtex
+  via bibtexu; biblatex via `backend=bibtex` (auto-detected, bibtexu `--wolfgang`); CSL
+  styles in-engine under lualatex (citeproc-lua); and **real biber** — Perl 5.42 + biber
+  2.19 compiled to wasm (`biber.wasm` 9.1 MB + `biber-vfs.tar.gz` 14 MB, built by
+  `make biber-emscripten` / `engine/scripts/biber/spike-build.sh`), output verified
+  byte-identical to native. latexmk auto-detects default-backend biblatex docs
+  (`willRunBiber`). The biber version is LOCKSTEPPED to the TDS biblatex version —
+  `scripts/check-biber-lockstep.mjs` enforces the pairing in CI (biblatex 3.19 ↔ biber 2.19).
 - **Do not** copy code from texlyre-busytex (AGPL-3) or vendor SwiftLaTeX directly (AGPL-3).
 
 ## Working in this repo

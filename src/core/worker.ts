@@ -307,16 +307,22 @@ class WorkerImpl implements WorkerApi {
     }
     mkdirCached(FS, '/texmf-dist', dirs);
 
+    // biber's VFS (biber-vfs.tar.gz: perl/ + biber/ trees) mounts at the
+    // filesystem ROOT — it is a Perl runtime, not a texmf tree. Everything
+    // else is TDS-relative under /texmf-dist.
+    const fsRoot = this.engineId === 'biber' ? '' : '/texmf-dist';
     for (const [tdsPath, bytes] of this.tdsFiles) {
-      const absolute = `/texmf-dist/${tdsPath}`;
+      const absolute = `${fsRoot}/${tdsPath}`;
       mkdirCached(FS, dirname(absolute), dirs);
       FS.writeFile(absolute, bytes);
     }
-    // Regenerate the kpathsea filename database from what is ACTUALLY in
-    // the map — any bundled ls-R is stale the moment the lazy-fetch retry
-    // adds a file, and with $TEXMFDBS set the db is authoritative. Keeping
-    // it exact turns every `//` search into an O(1) db hit.
-    FS.writeFile('/texmf-dist/ls-R', buildLsR(this.tdsFiles.keys()));
+    if (this.engineId !== 'biber') {
+      // Regenerate the kpathsea filename database from what is ACTUALLY in
+      // the map — any bundled ls-R is stale the moment the lazy-fetch retry
+      // adds a file, and with $TEXMFDBS set the db is authoritative. Keeping
+      // it exact turns every `//` search into an O(1) db hit.
+      FS.writeFile('/texmf-dist/ls-R', buildLsR(this.tdsFiles.keys()));
+    }
     return module;
   }
 

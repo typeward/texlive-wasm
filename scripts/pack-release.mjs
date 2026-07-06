@@ -49,6 +49,9 @@ const ENGINES = [
   'bibtexu',
   'xdvipdfmx',
   'makeindex',
+  // biber's dir also carries biber-vfs.tar.gz (the Perl runtime tree) —
+  // packed into the same per-engine archive automatically.
+  'biber',
 ];
 
 async function main() {

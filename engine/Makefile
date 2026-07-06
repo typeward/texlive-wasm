@@ -49,6 +49,9 @@ include targets/icu-native.mk
 # Wasm fontconfig + expat + freetype (for xelatex).
 include targets/fontconfig-wasm.mk
 
+# biber 2.19 on Perl 5.42 (extra engine — not part of ENGINES_V1).
+include targets/biber-wasm.mk
+
 # Per-target rules.
 include targets/emscripten.mk
 include targets/wasi.mk

@@ -76,6 +76,13 @@ jobs:
       - name: fetch TDS (no-op on cache hit)
         run: bash scripts/fetch-tds.sh
 
+      # biblatex validates the .bbl format version and biber validates the
+      # .bcf version — a mismatched pair refuses to run (observed live:
+      # biber 2.18 rejects biblatex-3.19 control files). Fail the deploy
+      # rather than ship a broken pairing.
+      - name: check biber/biblatex version lockstep
+        run: node scripts/check-biber-lockstep.mjs
+
       # .fmt files are binary-coupled to the exact engine build — always
       # regenerate them with the wasm engines just downloaded (overwrites
       # whatever the cached tree holds).
@@ -100,12 +107,14 @@ jobs:
 
       - name: stage runtime assets into dist/core
         run: |
-          for e in pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex; do
+          for e in pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex biber; do
             mkdir -p "demo/dist/core/$e/emscripten"
             cp "engine-artifacts/$e/emscripten/$e.js" \
                "engine-artifacts/$e/emscripten/$e.wasm" \
                "demo/dist/core/$e/emscripten/"
           done
+          # biber's Perl runtime VFS rides beside its wasm.
+          cp engine-artifacts/biber/emscripten/biber-vfs.tar.gz demo/dist/core/biber/emscripten/
           cp engine-artifacts/texmf.tar.gz engine-artifacts/icudt78l.dat demo/dist/core/
           du -sh demo/dist demo/dist/core
 

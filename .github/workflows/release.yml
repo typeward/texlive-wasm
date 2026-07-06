@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex]
+        engine: [pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex, biber]
         target: [emscripten]
     steps:
       - uses: actions/checkout@v7
@@ -82,6 +82,10 @@ jobs:
           # ICU locale data rides along with the xelatex leg (bibtexu uses it too).
           if [ "${{ matrix.engine }}" = "xelatex" ]; then
             cp vendor/texlive-source/libs/icu/icu-src/source/data/in/icudt78l.dat staged/
+          fi
+          # biber ships its Perl runtime VFS beside the wasm.
+          if [ "${{ matrix.engine }}" = "biber" ]; then
+            cp "engine/build/biber/emscripten/biber-vfs.tar.gz" staged/
           fi
           ls -la staged/
 

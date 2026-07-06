@@ -2,7 +2,14 @@
  * Shared type definitions.
  */
 
-export type EngineId = 'pdflatex' | 'xelatex' | 'lualatex' | 'bibtexu' | 'xdvipdfmx' | 'makeindex';
+export type EngineId =
+  | 'pdflatex'
+  | 'xelatex'
+  | 'lualatex'
+  | 'bibtexu'
+  | 'xdvipdfmx'
+  | 'makeindex'
+  | 'biber';
 
 export interface EngineConfig {
   /** URL or absolute path of the engine `.wasm` artifact. */

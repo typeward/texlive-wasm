@@ -13,11 +13,12 @@
 export { createEngine } from './core/engine';
 export { createEngineManager } from './core/manager';
 export type { EngineManager, EngineManagerOptions } from './core/manager';
-export { latexmk, willRunBibtex } from './latexmk';
+export { latexmk, willRunBibtex, willRunBiber } from './latexmk';
 export { PdfLatex } from './engines/pdflatex';
 export { XeLatex } from './engines/xelatex';
 export { LuaLatex } from './engines/lualatex';
 export { Bibtexu } from './engines/bibtexu';
+export { Biber } from './engines/biber';
 export { Makeindex } from './engines/makeindex';
 export { Xdvipdfmx } from './engines/xdvipdfmx';
 export { createSynctex } from './synctex';
@@ -43,6 +44,7 @@ export type { PdfLatexCompileOptions } from './engines/pdflatex';
 export type { XeLatexCompileOptions } from './engines/xelatex';
 export type { LuaLatexCompileOptions } from './engines/lualatex';
 export type { BibtexuOptions } from './engines/bibtexu';
+export type { BiberOptions } from './engines/biber';
 export type { MakeindexOptions } from './engines/makeindex';
 export type { XdvipdfmxOptions } from './engines/xdvipdfmx';
 

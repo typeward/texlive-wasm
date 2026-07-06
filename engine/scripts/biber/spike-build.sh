@@ -372,6 +372,90 @@ stage_biber_smoke() {
   echo "    (exit $?)"
 }
 
+# M4 packaging: install the cross perl into a staging prefix, merge the
+# pure-perl trees, prune aggressively, pack biber-vfs.tar.gz, and produce
+# the BROWSER artifact (MODULARIZE/EXPORT_ES6 link matching the engine
+# conventions in targets/emscripten.mk) at build/biber/emscripten/.
+stage_dist() {
+  local src="$BUILD/perl-emcc-src"
+  local native="$BUILD/native"
+  local stage="$BUILD/vfs-stage"
+  local out="$BUILD/emscripten"
+  [ -x "$src/perl" ] || { echo "run stage cross first" >&2; exit 1; }
+  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1
+
+  echo "==> [dist] installperl (direct — make install would build utilities)"
+  rm -rf "$stage" && mkdir -p "$stage" "$out"
+  (cd "$src" && "$native/miniperl" -Ilib installperl --destdir="$stage" > install.log 2>&1) \
+    || { tail -15 "$src/install.log"; exit 1; }
+
+  echo "==> [dist] merging purelib + biber into site_perl"
+  local site="$stage/perl/lib/site_perl/5.42.0"
+  mkdir -p "$site"
+  cp -rn "$BUILD/purelib/lib/perl5/." "$site/"
+  cp -rn "$BUILD/biber-dist/lib/." "$site/"
+  # site_perl precedes the core lib in @INC, and the purelib contains PURE
+  # copies of dists we compiled statically (cpanm --pp installed e.g. a
+  # Clone.pm whose XSLoader can only fail). Core must win: drop any site
+  # module that also exists in the core lib — INCLUDING the archlib subdir,
+  # where installperl puts static-ext .pm files (compare with the arch
+  # segment stripped or nothing matches).
+  local archname=wasm32-emscripten-64int
+  (cd "$stage/perl/lib/5.42.0" && {
+    find . -name '*.pm'
+    [ -d "$archname" ] && (cd "$archname" && find . -name '*.pm')
+  } | sort -u | while read -r pm; do
+    rm -f "$site/$pm"
+  done)
+  mkdir -p "$stage/biber/bin"
+  cp "$BUILD/biber-dist/bin/biber" "$stage/biber/bin/"
+  # Biber loads its datamodel/recode data via relative dist paths or
+  # File::ShareDir — ship data/ next to the lib tree both ways.
+  if [ -d "$BUILD/biber-dist/data" ]; then
+    mkdir -p "$site/auto/share/dist/biblatex-biber"
+    cp -rn "$BUILD/biber-dist/data/." "$site/auto/share/dist/biblatex-biber/"
+  fi
+
+  echo "==> [dist] pruning"
+  rm -rf "$stage/perl/bin" "$stage/perl/man" 2>/dev/null || true
+  find "$stage" -name '*.pod' -delete
+  find "$stage" -name '.packlist' -delete
+  find "$stage" -name '*.h' -path '*/CORE/*' -delete
+  find "$stage" -type d -name man -prune -exec rm -rf {} + 2>/dev/null || true
+  find "$stage" -type d -empty -delete
+  du -sh "$stage"
+
+  echo "==> [dist] packing biber-vfs.tar.gz"
+  tar -C "$stage" -czf "$out/biber-vfs.tar.gz" perl biber
+  ls -la "$out/biber-vfs.tar.gz"
+
+  echo "==> [dist] browser link (MODULARIZE, engine conventions)"
+  (cd "$src" && emcc -O2 -o "$out/biber.js" \
+    -sSUPPORT_LONGJMP=emscripten \
+    -sALLOW_MEMORY_GROWTH=1 \
+    -sMEMORY_GROWTH_GEOMETRIC_STEP=0.5 \
+    -sINITIAL_MEMORY=67108864 \
+    -sMAXIMUM_MEMORY=2147483648 \
+    -sSTACK_SIZE=8388608 \
+    -sMODULARIZE=1 \
+    -sEXPORT_ES6=1 \
+    -sEXPORTED_RUNTIME_METHODS=FS,callMain,PATH,HEAPU8,HEAPU32 \
+    -sEXPORTED_FUNCTIONS=_main,_malloc,_free \
+    -sENVIRONMENT=worker,web,node \
+    -sFORCE_FILESYSTEM=1 \
+    -sEXIT_RUNTIME=0 \
+    -sINVOKE_RUN=0 \
+    perlmain.o $(cat "$src/static.list" 2>/dev/null || ls lib/auto/*/*.a lib/auto/*/*/*.a lib/auto/*/*/*/*.a 2>/dev/null | tr '\n' ' ') libperl.a $(cat "$src/ext.libs") -lm)
+  ls -la "$out/biber.js" "$out/biber.wasm"
+}
+
+# Browser-artifact smoke: instantiate the MODULARIZE factory in Node,
+# populate MEMFS from biber-vfs.tar.gz exactly like src/core/worker.ts
+# does, run --version and the roundtrip fixture fully in-memory.
+stage_dist_smoke() {
+  node "$SCRIPTS/dist-smoke.mjs" "$BUILD"
+}
+
 # Step 4: authentic .bcf (made by OUR pdflatex.wasm) → wasm biber → .bbl,
 # byte-diffed against native biber, timed against the spike criteria.
 stage_roundtrip() {
@@ -453,6 +537,8 @@ case "$STAGE" in
   biber)       stage_biber ;;
   biber-smoke) stage_biber_smoke ;;
   roundtrip)   stage_roundtrip ;;
+  dist)        stage_dist ;;
+  dist-smoke)  stage_dist_smoke ;;
   all)         stage_native && stage_cross && stage_smoke ;;
   *) echo "unknown stage: $STAGE (native|purelib|cross|smoke|libxml2|xs-fetch|xs-smoke|biber|biber-smoke|all)" >&2; exit 1 ;;
 esac

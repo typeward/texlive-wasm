@@ -7,6 +7,7 @@ const ENGINES = [
   ['XeLaTeX', 'xelatex.wasm', '2.8 MB', 'XeTeX 0.999998, ICU 78.2'],
   ['LuaLaTeX', 'lualatex.wasm', '4.8 MB', 'LuaHBTeX 1.24.0'],
   ['BibTeXu', 'bibtexu.wasm', '877 KB', 'BibTeXu 0.99d-x4.03, ICU 78.2'],
+  ['biber', 'biber.wasm', '9.1 MB + 14 MB VFS', 'biber 2.19 on Perl 5.42 — a wasm first'],
   ['xdvipdfmx', 'xdvipdfmx.wasm', '765 KB', '.xdv → PDF driver'],
   ['makeindex', 'makeindex.wasm', '192 KB', 'index processor'],
 ] as const;
@@ -70,10 +71,11 @@ export function AboutTab() {
           service-worker tricks. Plain static hosting (and mobile WebViews) just work.
         </li>
         <li>
-          biblatex works via <code>backend=bibtex</code> (auto-detected; BibTeXu runs with{' '}
-          <code>--wolfgang</code>), and CSL styles run in-engine under LuaLaTeX via citeproc-lua.
-          biber itself is not shipped yet, so documents on the default biber backend won't resolve
-          citations — a biber.wasm port is in progress.
+          The full bibliography stack is here: classic BibTeX, biblatex via{' '}
+          <code>backend=bibtex</code> (BibTeXu with <code>--wolfgang</code>), CSL styles in-engine
+          under LuaLaTeX, and <strong>real biber</strong> — Perl 5.42 + biber 2.19 compiled to
+          wasm, output byte-identical to native. Its artifact is lazily fetched only when a
+          default-backend biblatex document compiles.
         </li>
         <li>SyncTeX forward/reverse lookups are Phase-4 work (the parser lists input files today).</li>
         <li>Desktop browsers are the target; mobile devices may hit memory limits.</li>

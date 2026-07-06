@@ -62,7 +62,7 @@ export function App() {
       >
         <strong style={{ 'font-size': '16px' }}>texlive-wasm</strong>
         <span style={{ 'font-size': '12px', opacity: '0.8' }}>
-          TeX Live 2026 · six engines · 100% in your browser
+          TeX Live 2026 · seven engines · 100% in your browser
         </span>
         <a
           href="https://github.com/typeward/texlive-wasm"

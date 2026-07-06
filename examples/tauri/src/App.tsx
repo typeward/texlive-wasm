@@ -48,7 +48,9 @@ export function App() {
 
       const pdf = result.outputs.get('main.pdf');
       if (pdf) {
-        const blob = new Blob([pdf], { type: 'application/pdf' });
+        // Copy into a fresh ArrayBuffer-backed view: TS 5.7+ dom types reject
+        // Uint8Array<ArrayBufferLike> as a BlobPart.
+        const blob = new Blob([new Uint8Array(pdf)], { type: 'application/pdf' });
         setPdfUrl(URL.createObjectURL(blob));
         setStatus(`done in ${dt.toFixed(0)} ms — exit ${result.exitCode}`);
       } else {

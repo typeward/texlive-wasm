@@ -41,14 +41,32 @@ class TauriAwarePdfLatex extends _PdfLatex {
   }
 
   private async initTauriHandle(cfg: EngineConfig, texmfRoot: string): Promise<void> {
+    // Preload the per-engine CORE bundle when it is staged (pack-tds.mjs
+    // --tier core --engine pdflatex → copied by ensure-assets). Without it
+    // the first pass starts against an empty /texmf-dist and leans entirely
+    // on the on-miss retry — slow at best, fragile for real documents.
+    const coreBundle = await probeCoreBundle('pdflatex');
     const handle: EngineHandle = await withTauriFs(
-      (vfs: VfsBackend[]) => createEngine('pdflatex', { ...cfg, vfs }),
+      (vfs: VfsBackend[]) =>
+        createEngine('pdflatex', { ...cfg, ...(coreBundle ? { bundleUrl: coreBundle } : {}), vfs }),
       { texmfRoot, baseDir: TAURI_RESOURCE },
     );
     this.handle = handle;
   }
 }
 
+async function probeCoreBundle(engine: string): Promise<string | undefined> {
+  const url = new URL(`texlive-wasm/texmf-core-${engine}.tar.gz`, document.baseURI).href;
+  try {
+    const r = await fetch(url, { method: 'HEAD' });
+    return r.ok ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const PdfLatex = TauriAwarePdfLatex;
+// Type alias so `let engine: PdfLatex` works — the export above is a value.
+export type PdfLatex = TauriAwarePdfLatex;
 export { isTauri };
 export type { RunResult } from 'texlive-wasm';

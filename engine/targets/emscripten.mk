@@ -25,20 +25,22 @@ EMSDK_ENV := source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 &&
 #   -sMODULARIZE -sEXPORT_ES6    so the JS glue is ESM, lazy-instantiable
 #   -sFORCE_FILESYSTEM           ensures FS is included even with WASMFS
 #   -sALLOW_MEMORY_GROWTH        TeX engines grow rapidly under heavy docs
-#   -sINITIAL_MEMORY=64MB        plenty for hello-world, grows as needed
+#   -sINITIAL_MEMORY=32MB        small floor: mobile WebViews pay for every
+#                                worker's heap; growth reallocs on non-shared
+#                                memory are cheap (a handful of geometric
+#                                steps per run)
 #   -sEXIT_RUNTIME=0             we callMain repeatedly; don't kill the heap
 #   -sEXPORTED_RUNTIME_METHODS   what our worker.ts uses
 #   -sEXPORTED_FUNCTIONS         _main + _malloc/_free for stdin/files
-#   -pthread                     enable wasm-threads for parallel fmt/font work
-# Note: we used to ship `-pthread` here, but TL's libs were compiled without
-# atomics/bulk-memory, which makes them incompatible with shared-memory link.
-# Single-threaded is fine for v1; we can rebuild libs with -pthread later.
+# Threading is governed by ENABLE_THREADS in common.mk (default off — see
+# the rationale there; a threaded build needs a cross-origin-isolated page).
 EMCC_COMMON := \
 	$(OPT) \
 	$(THREAD_LDFLAGS) \
 	-sWASMFS=1 \
 	-sALLOW_MEMORY_GROWTH=1 \
-	-sINITIAL_MEMORY=134217728 \
+	-sMEMORY_GROWTH_GEOMETRIC_STEP=0.5 \
+	-sINITIAL_MEMORY=33554432 \
 	-sMAXIMUM_MEMORY=2147483648 \
 	-sSTACK_SIZE=8388608 \
 	-sMODULARIZE=1 \

@@ -233,12 +233,19 @@ class WorkerImpl implements WorkerApi {
     let log = '';
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const module = await this.createInstance();
-      const FS = module.FS;
-      for (const file of opts.files ?? []) {
-        const absolute = `/project/${stripLeadingSlash(file.path)}`;
-        mkdirP(FS, dirname(absolute));
-        FS.writeFile(absolute, normalizeBytes(file.content));
+      let module: EmscriptenModule;
+      let FS: EmscriptenFS;
+      try {
+        module = await this.createInstance();
+        FS = module.FS;
+        for (const file of opts.files ?? []) {
+          const absolute = `/project/${stripLeadingSlash(file.path)}`;
+          mkdirP(FS, dirname(absolute));
+          FS.writeFile(absolute, normalizeBytes(file.content));
+        }
+      } catch (err) {
+        rethrowIfOom(err);
+        throw err;
       }
       FS.chdir(opts.cwd ?? '/project');
 
@@ -253,6 +260,7 @@ class WorkerImpl implements WorkerApi {
         if (typeof e?.status === 'number') {
           exitCode = e.status;
         } else {
+          rethrowIfOom(err);
           throw err;
         }
       }
@@ -409,6 +417,24 @@ function stripLeadingSlash(p: string): string {
 function dirname(p: string): string {
   const i = p.lastIndexOf('/');
   return i <= 0 ? '/' : p.slice(0, i);
+}
+
+/**
+ * Emscripten reports heap-growth failure as an abort ("Cannot enlarge memory
+ * arrays", "OOM") or a bare RangeError from WebAssembly.Memory.grow. Rethrow
+ * those under a stable name (Comlink preserves name/message across the worker
+ * boundary) so apps can react — dispose idle engines, retry — instead of
+ * treating it as an opaque engine crash.
+ */
+function rethrowIfOom(err: unknown): void {
+  const text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  if (err instanceof RangeError || /cannot enlarge memory|out of memory|\bOOM\b/i.test(text)) {
+    const oom = new Error(
+      `engine ran out of memory (${text}); dispose idle engines or reduce concurrent workers, then retry`,
+    );
+    oom.name = 'EngineOutOfMemoryError';
+    throw oom;
+  }
 }
 
 /** Existence check that is safe for directories under WASMFS (see interface note). */

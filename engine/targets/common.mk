@@ -4,13 +4,14 @@
 #   make pdflatex-emscripten OPT=-O0
 OPT ?= -Oz
 
-# WebAssembly threading. Adds atomics + bulk-memory opcodes to the compiled
-# wasm so libs (libharfbuzz, ICU, lua* runtimes) can call pthread primitives
-# instead of degrading to no-ops. Requires the host page to be cross-origin
-# isolated (COOP=same-origin + COEP=require-corp) so SharedArrayBuffer is
-# available. Disable for the legacy single-thread build with
-# `make ... ENABLE_THREADS=0`.
-ENABLE_THREADS ?= 1
+# WebAssembly threading. OFF by default: nothing in the engines spawns
+# threads (TeX is single-threaded; library pthread primitives degrade to
+# safe no-ops), and a threaded build allocates SharedArrayBuffer-backed
+# memory, which hard-requires a cross-origin-isolated page — something
+# Android System WebView (our primary Tauri target) cannot reliably
+# provide. Opt back in with `make ... ENABLE_THREADS=1`; that build only
+# runs where COOP=same-origin + COEP=require-corp headers are served.
+ENABLE_THREADS ?= 0
 ifeq ($(ENABLE_THREADS),1)
 THREAD_CFLAGS  := -pthread -mbulk-memory -matomics
 THREAD_LDFLAGS := -pthread -sSHARED_MEMORY=1

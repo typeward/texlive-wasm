@@ -92,11 +92,13 @@ jobs:
             engine/
 
       - name: ${{ matrix.engine }}-${{ matrix.target }}
+        # ENABLE_THREADS=0 pinned for the same reason as release.yml: shared-
+        # memory builds don't instantiate in Android System WebView.
         run: |
           docker run --rm \
             -v "$PWD":/workspace -w /workspace/engine \
             texlive-wasm-builder:ci \
-            make -j$(nproc) ${{ matrix.engine }}-${{ matrix.target }}
+            make -j$(nproc) ENABLE_THREADS=0 ${{ matrix.engine }}-${{ matrix.target }}
 
       - name: upload artifact
         uses: actions/upload-artifact@v7

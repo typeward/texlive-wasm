@@ -59,17 +59,26 @@ jobs:
             engine/
 
       - name: build ${{ matrix.engine }}-${{ matrix.target }}
+        # ENABLE_THREADS=0 is already the Makefile default; pin it here so a
+        # future default flip can't silently ship shared-memory artifacts
+        # (which won't instantiate in Android System WebView).
         run: |
           docker run --rm \
             -v "$PWD":/workspace -w /workspace/engine \
             texlive-wasm-builder:ci \
-            make -j$(nproc) ${{ matrix.engine }}-${{ matrix.target }}
+            make -j$(nproc) ENABLE_THREADS=0 ${{ matrix.engine }}-${{ matrix.target }}
 
       - name: stage artifact
         run: |
           mkdir -p staged
           cp "engine/build/${{ matrix.engine }}/${{ matrix.target }}/${{ matrix.engine }}.wasm" staged/
           cp "engine/build/${{ matrix.engine }}/${{ matrix.target }}/${{ matrix.engine }}.js" staged/ 2>/dev/null || true
+          # Regression guard: single-threaded artifacts must not allocate
+          # SharedArrayBuffer-backed memory.
+          if [ -f "staged/${{ matrix.engine }}.js" ] && grep -q 'shared:true' "staged/${{ matrix.engine }}.js"; then
+            echo "::error::${{ matrix.engine }}.js contains shared:true — threaded build leaked into the release"
+            exit 1
+          fi
           # ICU locale data rides along with the xelatex leg (bibtexu uses it too).
           if [ "${{ matrix.engine }}" = "xelatex" ]; then
             cp vendor/texlive-source/libs/icu/icu-src/source/data/in/icudt78l.dat staged/

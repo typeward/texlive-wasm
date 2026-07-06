@@ -27,12 +27,27 @@ inc_version_list='none'
 man1dir='none'
 man3dir='none'
 
-# Static everything — no dynamic loading in our wasm runtime.
-dlsrc='none'
+# Static everything — no dynamic loading in our wasm runtime. dlsrc must
+# be the stub SOURCE FILE name, not the word "none" (the DynaLoader
+# Makefile depends on the file).
+dlsrc='dl_none.xs'
 usedl='undef'
 d_dlopen='undef'
 loclibpth=''
 glibpth=''
+
+# Host-probe leaks: Configure runs probes on the BUILD host (perlcc try.c
+# trick), so Linux-only features it "detects" must be pinned off here.
+d_prctl='undef'
+d_prctl_set_name='undef'
+d_futimes='undef'
+d_getspnam='undef'
+d_cuserid='undef'
+d_sigsuspend='undef'
+
+# Fork-less builds route system() through platform do_spawn/do_aspawn
+# (the Win32/RISC OS model) — emstubs.c provides ENOSYS versions.
+archobjs='emstubs.o'
 
 # Process control / IPC that Emscripten cannot provide for real.
 d_fork='undef'
@@ -98,10 +113,15 @@ uselargefiles='define'
 lseektype='off_t'
 lseeksize='8'
 
-# Locale: Emscripten ships the plain "C" locale only.
+# Locale: Emscripten ships the plain "C" locale only. musl's LC_ALL
+# composite is POSITIONAL with ';' separators ("C.UTF-8;C;C;C;C;C") — the
+# host probe sees glibc's name=value format instead, and the mismatched
+# parser panics in locale.c at startup ("needs an '=' to split name=value").
 d_setlocale='undef'
+d_perl_lc_all_uses_name_value_pairs='undef'
 d_perl_lc_all_separator='define'
-perl_lc_all_separator=';'
+# The value must be a C string literal — it lands verbatim in config.h.
+perl_lc_all_separator='";"'
 d_perl_lc_all_category_positions_init='define'
 perl_lc_all_category_positions_init='{ 0, 1, 2, 3, 4, 5 }'
 

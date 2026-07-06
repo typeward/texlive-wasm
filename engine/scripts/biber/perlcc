@@ -37,4 +37,13 @@ fi
 if ! command -v emcc >/dev/null 2>&1; then
   source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1
 fi
-exec emcc -sSUPPORT_LONGJMP=emscripten "$@"
+
+# Link steps (no -c) get NODERAWFS so the spike's Node runs see the host
+# filesystem — perl must load its .pm tree from the build dir. The final
+# browser artifact will use a separate link recipe (MEMFS + MODULARIZE).
+link_flags=()
+case " $* " in
+  *" -c "*) ;;
+  *) link_flags=(-sNODERAWFS=1) ;;
+esac
+exec emcc -sSUPPORT_LONGJMP=emscripten "${link_flags[@]}" "$@"

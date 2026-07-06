@@ -73,6 +73,26 @@ stage_native() {
   echo "==> [native] done: $("$out/miniperl" -e 'print $]')"
 }
 
+# Pure-perl runtime deps, staged with the NATIVE perl's cpanm into a lib
+# tree the wasm perl reads via -I (pure perl is architecture-independent).
+# Spike-scope: unpinned cpanm installs; the production M4 build will pin.
+stage_purelib() {
+  local native="$BUILD/native"
+  local purelib="$BUILD/purelib"
+  local nperl="$native/prefix/bin/perl"
+  [ -x "$nperl" ] || { echo "run stage native first" >&2; exit 1; }
+  if [ ! -x "$native/prefix/bin/cpanm" ]; then
+    echo "==> [purelib] installing cpanminus into the native perl"
+    curl -fsSL https://cpanmin.us | "$nperl" - --notest App::cpanminus >/dev/null
+  fi
+  # NOTE: never list dists here whose dep tree includes XML::LibXML — cpanm
+  # would try to build it natively; the wasm perl has it statically.
+  # (XML::LibXML::Simple is staged file-wise in the biber stage instead.)
+  "$native/prefix/bin/cpanm" -L "$purelib" --notest \
+    XML::SAX XML::NamespaceSupport 2>&1 | tail -3
+  echo "==> [purelib] $(find "$purelib/lib/perl5" -name '*.pm' | wc -l) modules staged"
+}
+
 stage_cross() {
   local dir="$BUILD/perl-emcc-src"
   local native="$BUILD/native"
@@ -115,7 +135,14 @@ stage_cross() {
   if [ -f "$xl" ]; then
     mkdir -p ext/XML-LibXML
     tar -xzf "$xl" -C ext/XML-LibXML --strip-components=1
-    echo "==> [cross] staged ext/XML-LibXML"
+    # Its Makefile.PL locates libxml2 through Alien::Libxml2, which cannot
+    # exist in a cross build — swap the Alien wrapper for direct flags from
+    # our wasm libxml2 prefix ($XMLPREFIX, exported below).
+    sed -i \
+      -e 's|^use Alien::Base::Wrapper.*$|# texlive-wasm: Alien wrapper replaced by direct XMLPREFIX flags|' \
+      -e 's|^my %xsbuild = Alien::Base::Wrapper->mm_args;.*$|my %xsbuild = ( INC => "-I$ENV{XMLPREFIX}/include/libxml2", LIBS => "-L$ENV{XMLPREFIX}/lib -lxml2" );|' \
+      ext/XML-LibXML/Makefile.PL
+    echo "==> [cross] staged ext/XML-LibXML (Alien wrapper bypassed)"
   fi
   # XML::LibXML's Makefile.PL locates libxml2 through xml2-config.
   if [ -x "$BUILD/wasm-libs/libxml2/bin/xml2-config" ]; then
@@ -192,10 +219,11 @@ stage_xs_fetch() {
 stage_xs_smoke() {
   cd "$BUILD/perl-emcc-src"
   cp -f perl perl.cjs
+  local inc=(-Ilib "-I$BUILD/purelib/lib/perl5")
   echo "==> [xs-smoke] XML::LibXML parses a .bcf-ish document"
-  node perl.cjs -Ilib -e 'use XML::LibXML; my $doc = XML::LibXML->load_xml(string => q{<bcf:controlfile xmlns:bcf="https://sourceforge.net/projects/biblatex"><bcf:datamodel><bcf:entrytype>article</bcf:entrytype></bcf:datamodel></bcf:controlfile>}); my ($n) = $doc->documentElement->getElementsByTagName("bcf:entrytype"); print "bcf ok: ", $n->textContent, "\n"'
+  node perl.cjs "${inc[@]}" -e 'use XML::LibXML; my $doc = XML::LibXML->load_xml(string => q{<bcf:controlfile xmlns:bcf="https://sourceforge.net/projects/biblatex"><bcf:datamodel><bcf:entrytype>article</bcf:entrytype></bcf:datamodel></bcf:controlfile>}); my ($n) = $doc->documentElement->getElementsByTagName("bcf:entrytype"); print "bcf ok: ", $n->textContent, "\n"'
   echo "==> [xs-smoke] Text::BibTeX parses a .bib entry"
-  node perl.cjs -Ilib -e 'use Text::BibTeX; my $e = Text::BibTeX::Entry->new({ binmode => "utf-8" }); $e->parse_s(q{@book{knuth, author = {Donald E. Knuth}, title = {TAOCP}}}); print "bib ok: ", $e->get("author"), "\n"'
+  node perl.cjs "${inc[@]}" -e 'use Text::BibTeX; my $e = Text::BibTeX::Entry->new({ binmode => "utf-8" }); $e->parse_s(q{@book{knuth, author = {Donald E. Knuth}, title = {TAOCP}}}); print "bib ok: ", $e->get("author"), "\n"'
 }
 
 stage_smoke() {
@@ -219,11 +247,12 @@ stage_smoke() {
 
 case "$STAGE" in
   native)   stage_native ;;
+  purelib)  stage_purelib ;;
   cross)    stage_cross ;;
   smoke)    stage_smoke ;;
   libxml2)  stage_libxml2 ;;
   xs-fetch) stage_xs_fetch ;;
   xs-smoke) stage_xs_smoke ;;
   all)      stage_native && stage_cross && stage_smoke ;;
-  *) echo "unknown stage: $STAGE (native|cross|smoke|libxml2|xs-fetch|xs-smoke|all)" >&2; exit 1 ;;
+  *) echo "unknown stage: $STAGE (native|purelib|cross|smoke|libxml2|xs-fetch|xs-smoke|all)" >&2; exit 1 ;;
 esac

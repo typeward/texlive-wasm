@@ -23,6 +23,9 @@
 #define HAVE_UNISTD_H 1
 #define HAVE_SYS_STAT_H 1
 #define HAVE_SYS_TYPES_H 1
+/* musl declares strlcat in string.h — without this, btparse's static
+ * fallback collides with the libc declaration. */
+#define HAVE_STRLCAT 1
 /* musl has no strlwr/strupr; btparse carries fallbacks. */
 
 #define PACKAGE "btparse"

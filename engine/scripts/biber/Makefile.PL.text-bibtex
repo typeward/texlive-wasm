@@ -9,8 +9,10 @@
 # just compiles everything into one extension archive.
 use ExtUtils::MakeMaker;
 
+# pccts is header-only support for the ANTLR-generated parser — ast.c is a
+# template meant for inclusion, never compiled standalone (bibtex_ast.c has
+# the real AST functions).
 my @c = grep { $_ ne 'BibTeX.c' } glob('*.c');
-push @c, 'pccts/ast.c';
 my $objects = join ' ', 'BibTeX$(OBJ_EXT)', map { s/\.c$/\$(OBJ_EXT)/r } @c;
 
 WriteMakefile(

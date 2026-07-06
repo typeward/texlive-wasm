@@ -59,11 +59,12 @@ coi-serviceworker on GitHub Pages; that whole mechanism is gone.)
 ```bash
 npm run build
 # stage assets exactly like the deploy workflow does:
-for e in pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex; do
+for e in pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex biber; do
   mkdir -p dist/core/$e/emscripten
   cp ../engine-artifacts/$e/emscripten/$e.{js,wasm} dist/core/$e/emscripten/
 done
+cp ../engine-artifacts/biber/emscripten/biber-vfs.tar.gz dist/core/biber/emscripten/
 cp ../engine-artifacts/texmf.tar.gz ../engine-artifacts/icudt78l.dat dist/core/
-npm run preview          # headers path (SW no-ops)
-npx serve dist           # no-headers path (exercises the service worker)
+npm run preview
+npx serve dist           # plain static hosting works — no special headers
 ```

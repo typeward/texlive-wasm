@@ -39,11 +39,12 @@ if ! command -v emcc >/dev/null 2>&1; then
 fi
 
 # Link steps (no -c) get NODERAWFS so the spike's Node runs see the host
-# filesystem — perl must load its .pm tree from the build dir. The final
-# browser artifact will use a separate link recipe (MEMFS + MODULARIZE).
+# filesystem — perl must load its .pm tree from the build dir — plus a
+# growable heap: biber's module tree alone runs past the default ~22 MB.
+# The final browser artifact will use a separate link recipe.
 link_flags=()
 case " $* " in
   *" -c "*) ;;
-  *) link_flags=(-sNODERAWFS=1) ;;
+  *) link_flags=(-sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=67108864) ;;
 esac
 exec emcc -sSUPPORT_LONGJMP=emscripten "${link_flags[@]}" "$@"

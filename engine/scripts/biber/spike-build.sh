@@ -48,6 +48,59 @@ XMLLIBXML_URLS=(
   "https://www.cpan.org/authors/id/S/SH/SHLOMIF/XML-LibXML-$XMLLIBXML_VERSION.tar.gz"
 )
 
+# Step-3: the remaining XS deps biber loads unconditionally (Sort::Key,
+# `no autovivification`, Unicode::GCString/LineBreak with bundled sombok) —
+# plain MakeMaker dists dropped into ext/ as-is.
+SORTKEY_VERSION=1.33
+SORTKEY_SHA256=ed6a4ccfab094c9cd164f564024e98bd21d94f4312ccac4d6246d22b34081acf
+SORTKEY_URLS=(
+  "https://cpan.metacpan.org/authors/id/S/SA/SALVA/Sort-Key-$SORTKEY_VERSION.tar.gz"
+  "https://www.cpan.org/authors/id/S/SA/SALVA/Sort-Key-$SORTKEY_VERSION.tar.gz"
+)
+AUTOVIV_VERSION=0.18
+AUTOVIV_SHA256=2d99975685242980d0a9904f639144c059d6ece15899efde4acb742d3253f105
+AUTOVIV_URLS=(
+  "https://cpan.metacpan.org/authors/id/V/VP/VPIT/autovivification-$AUTOVIV_VERSION.tar.gz"
+  "https://www.cpan.org/authors/id/V/VP/VPIT/autovivification-$AUTOVIV_VERSION.tar.gz"
+)
+ULB_VERSION=2019.001
+ULB_SHA256=486762e4cacddcc77b13989f979a029f84630b8175e7fef17989e157d4b6318a
+ULB_URLS=(
+  "https://cpan.metacpan.org/authors/id/N/NE/NEZUMI/Unicode-LineBreak-$ULB_VERSION.tar.gz"
+  "https://www.cpan.org/authors/id/N/NE/NEZUMI/Unicode-LineBreak-$ULB_VERSION.tar.gz"
+)
+# Clone is XS-MANDATORY (Data::Compare pulls it in Biber::Config) —
+# tiny self-contained XS, static ext.
+CLONE_VERSION=0.47
+CLONE_SHA256=4c2c0cb9a483efbf970cb1a75b2ca75b0e18cb84bcb5c09624f86e26b09c211d
+CLONE_URLS=(
+  "https://cpan.metacpan.org/authors/id/A/AT/ATOOMIC/Clone-$CLONE_VERSION.tar.gz"
+  "https://www.cpan.org/authors/id/A/AT/ATOOMIC/Clone-$CLONE_VERSION.tar.gz"
+)
+# DateTime is XS-MANDATORY (unconditional XSLoader; no pure fallback) —
+# static ext like the others. Self-contained XS, plain MakeMaker.
+DATETIME_VERSION=1.66
+DATETIME_SHA256=afabd686fb83d3ebf49ee453974f9122f3eec9b25ff8d2ddf4f12de92af1e5e2
+DATETIME_URLS=(
+  "https://cpan.metacpan.org/authors/id/D/DR/DROLSKY/DateTime-$DATETIME_VERSION.tar.gz"
+  "https://www.cpan.org/authors/id/D/DR/DROLSKY/DateTime-$DATETIME_VERSION.tar.gz"
+)
+XLSIMPLE_VERSION=1.01
+XLSIMPLE_SHA256=cd98c8104b70d7672bfa26b4513b78adf2b4b9220e586aa8beb1a508500365a6
+XLSIMPLE_URLS=(
+  "https://cpan.metacpan.org/authors/id/M/MA/MARKOV/XML-LibXML-Simple-$XLSIMPLE_VERSION.tar.gz"
+  "https://www.cpan.org/authors/id/M/MA/MARKOV/XML-LibXML-Simple-$XLSIMPLE_VERSION.tar.gz"
+)
+# Biber itself: version LOCKSTEP with the TDS biblatex (Ubuntu noble ships
+# biblatex 3.19 → biber 2.19). GitHub tag archive — SourceForge mirrors
+# serve inconsistent bytes for the same path (observed live), git archives
+# are deterministic.
+BIBER_VERSION=2.19
+BIBER_SHA256=1c1266bc8adb1637c4c59e23c47d919c5a38da4e53544a3c22c21de4a68fc9fe
+BIBER_URLS=(
+  "https://github.com/plk/biber/archive/refs/tags/v$BIBER_VERSION.tar.gz"
+)
+
 mkdir -p "$BUILD"
 TARBALL="$BUILD/perl-$PERL_VERSION.tar.gz"
 
@@ -88,9 +141,28 @@ stage_purelib() {
   # NOTE: never list dists here whose dep tree includes XML::LibXML — cpanm
   # would try to build it natively; the wasm perl has it statically.
   # (XML::LibXML::Simple is staged file-wise in the biber stage instead.)
-  "$native/prefix/bin/cpanm" -L "$purelib" --notest \
+  # --pp: dual-life dists must build PURE (native XS .pm files land in the
+  # host arch dir the wasm perl never searches).
+  "$native/prefix/bin/cpanm" -L "$purelib" --notest --pp \
     XML::SAX XML::NamespaceSupport 2>&1 | tail -3
+  merge_archdir_pms
   echo "==> [purelib] $(find "$purelib/lib/perl5" -name '*.pm' | wc -l) modules staged"
+}
+
+# Safety net for dists that ignore PUREPERL_ONLY: their pure .pm files
+# install under the HOST arch dir, invisible to the wasm perl (it searches
+# its own archname). Merge them up, leaving native auto/*.so behind — a
+# module that truly needs its XS then fails with a clear XSLoader message.
+merge_archdir_pms() {
+  local purelib="$BUILD/purelib"
+  local archname
+  archname=$("$BUILD/native/prefix/bin/perl" -MConfig -e 'print $Config{archname}')
+  if [ -d "$purelib/lib/perl5/$archname" ]; then
+    (cd "$purelib/lib/perl5/$archname" && find . -name '*.pm' -not -path './auto/*' | while read -r pm; do
+      mkdir -p "$purelib/lib/perl5/$(dirname "$pm")"
+      cp -n "$pm" "$purelib/lib/perl5/$pm"
+    done)
+  fi
 }
 
 stage_cross() {
@@ -144,6 +216,32 @@ stage_cross() {
       ext/XML-LibXML/Makefile.PL
     echo "==> [cross] staged ext/XML-LibXML (Alien wrapper bypassed)"
   fi
+  # Step-3 XS deps: plain MakeMaker dists, dropped into ext/ unmodified.
+  local dist
+  for dist in \
+    "Sort-Key:$BUILD/Sort-Key-$SORTKEY_VERSION.tar.gz" \
+    "autovivification:$BUILD/autovivification-$AUTOVIV_VERSION.tar.gz" \
+    "Clone:$BUILD/Clone-$CLONE_VERSION.tar.gz" \
+    "DateTime:$BUILD/DateTime-$DATETIME_VERSION.tar.gz" \
+    "Unicode-LineBreak:$BUILD/Unicode-LineBreak-$ULB_VERSION.tar.gz"; do
+    local name="${dist%%:*}" tarball="${dist#*:}"
+    if [ -f "$tarball" ]; then
+      mkdir -p "ext/$name"
+      tar -xzf "$tarball" -C "ext/$name" --strip-components=1
+      echo "==> [cross] staged ext/$name"
+    fi
+  done
+  if [ -f ext/Unicode-LineBreak/Makefile.PL.sombok ]; then
+    # The sombok sub-build asks MakeMaker for $(PERL_INC), which resolves
+    # through the CROSS Config to the nonexistent /perl prefix. A relative
+    # override is not enough either: the compile rules `cd lib &&` first,
+    # shifting any relative -I one level. Hardwire the ABSOLUTE in-tree
+    # perl root. (INC escapes the dollar inside a Perl string, H does not
+    # — replace both spellings.)
+    sed -i -e "s|\\\\\$(PERL_INC)|$dir|g" -e "s|\$(PERL_INC)|$dir|g" \
+      ext/Unicode-LineBreak/Makefile.PL.sombok
+  fi
+
   # XML::LibXML's Makefile.PL locates libxml2 through xml2-config.
   if [ -x "$BUILD/wasm-libs/libxml2/bin/xml2-config" ]; then
     export PATH="$BUILD/wasm-libs/libxml2/bin:$PATH"
@@ -174,7 +272,10 @@ stage_cross() {
   set -e
   if [ $rc -ne 0 ]; then
     echo "==> [cross] make FAILED (rc=$rc); errors:"
-    grep -iE "error|undefined symbol" make.log | grep -vE "Werror|-Wno-|encoding-warnings" | head -30
+    # btparse ships files literally named error.c/error.h — exclude that
+    # warning noise or it drowns the real failure.
+    grep -nE "error:|Error [0-9]|Unsuccessful|undefined symbol|No rule" make.log \
+      | grep -vE "Werror|error\.[ch]" | head -25
     exit $rc
   fi
   tail -3 make.log
@@ -213,7 +314,62 @@ stage_xs_fetch() {
   [ -f "$tb" ] || bash "$ROOT/scripts/fetch-verify.sh" "$tb" "$TEXTBIBTEX_SHA256" "${TEXTBIBTEX_URLS[@]}"
   local xl="$BUILD/XML-LibXML-$XMLLIBXML_VERSION.tar.gz"
   [ -f "$xl" ] || bash "$ROOT/scripts/fetch-verify.sh" "$xl" "$XMLLIBXML_SHA256" "${XMLLIBXML_URLS[@]}"
+  local sk="$BUILD/Sort-Key-$SORTKEY_VERSION.tar.gz"
+  [ -f "$sk" ] || bash "$ROOT/scripts/fetch-verify.sh" "$sk" "$SORTKEY_SHA256" "${SORTKEY_URLS[@]}"
+  local av="$BUILD/autovivification-$AUTOVIV_VERSION.tar.gz"
+  [ -f "$av" ] || bash "$ROOT/scripts/fetch-verify.sh" "$av" "$AUTOVIV_SHA256" "${AUTOVIV_URLS[@]}"
+  local ul="$BUILD/Unicode-LineBreak-$ULB_VERSION.tar.gz"
+  [ -f "$ul" ] || bash "$ROOT/scripts/fetch-verify.sh" "$ul" "$ULB_SHA256" "${ULB_URLS[@]}"
+  local dt="$BUILD/DateTime-$DATETIME_VERSION.tar.gz"
+  [ -f "$dt" ] || bash "$ROOT/scripts/fetch-verify.sh" "$dt" "$DATETIME_SHA256" "${DATETIME_URLS[@]}"
+  local cl="$BUILD/Clone-$CLONE_VERSION.tar.gz"
+  [ -f "$cl" ] || bash "$ROOT/scripts/fetch-verify.sh" "$cl" "$CLONE_SHA256" "${CLONE_URLS[@]}"
   echo "==> [xs] tarballs fetched; run stage cross to build them in"
+}
+
+# Stage the biber dist + its pure-perl dependency tree.
+stage_biber() {
+  local native="$BUILD/native"
+  local purelib="$BUILD/purelib"
+  [ -x "$native/prefix/bin/cpanm" ] || { echo "run stage purelib first" >&2; exit 1; }
+
+  local bt="$BUILD/biblatex-biber-$BIBER_VERSION.tar.gz"
+  [ -f "$bt" ] || bash "$ROOT/scripts/fetch-verify.sh" "$bt" "$BIBER_SHA256" "${BIBER_URLS[@]}"
+  rm -rf "$BUILD/biber-dist" && mkdir -p "$BUILD/biber-dist"
+  tar -xzf "$bt" -C "$BUILD/biber-dist" --strip-components=1
+
+  # XML::LibXML::Simple is one pure .pm whose dep tree would drag cpanm
+  # into building XML::LibXML natively — stage the file directly.
+  local xs="$BUILD/XML-LibXML-Simple-$XLSIMPLE_VERSION.tar.gz"
+  [ -f "$xs" ] || bash "$ROOT/scripts/fetch-verify.sh" "$xs" "$XLSIMPLE_SHA256" "${XLSIMPLE_URLS[@]}"
+  local tmp
+  tmp=$(mktemp -d)
+  tar -xzf "$xs" -C "$tmp" --strip-components=1
+  mkdir -p "$purelib/lib/perl5/XML/LibXML"
+  cp "$tmp/lib/XML/LibXML/Simple.pm" "$purelib/lib/perl5/XML/LibXML/"
+  rm -rf "$tmp"
+
+  # Biber's pure-perl runtime deps (Build.PL requires minus: XS handled as
+  # static exts, network/LWP, tool-mode XSLT, build-time Module::Build).
+  # --pp keeps dual-life dists (DateTime!) out of the host arch dir.
+  "$native/prefix/bin/cpanm" -L "$purelib" --notest --pp \
+    Business::ISBN Business::ISMN Business::ISSN Class::Accessor \
+    Data::Compare Data::Dump Data::Uniqid DateTime::Format::Builder \
+    DateTime::Calendar::Julian File::Slurper IO::String IPC::Run3 \
+    List::AllUtils Lingua::Translit Log::Log4perl MIME::Charset \
+    Parse::RecDescent Regexp::Common Text::CSV Text::Roman URI \
+    XML::Writer 2>&1 | tail -3
+  merge_archdir_pms
+  echo "==> [biber] dist + purelib staged"
+}
+
+stage_biber_smoke() {
+  cd "$BUILD/perl-emcc-src"
+  cp -f perl perl.cjs
+  echo "==> [biber-smoke] biber --version under wasm perl"
+  node perl.cjs -Ilib "-I$BUILD/purelib/lib/perl5" "-I$BUILD/biber-dist/lib" \
+    "$BUILD/biber-dist/bin/biber" --version
+  echo "    (exit $?)"
 }
 
 stage_xs_smoke() {
@@ -246,13 +402,15 @@ stage_smoke() {
 }
 
 case "$STAGE" in
-  native)   stage_native ;;
-  purelib)  stage_purelib ;;
-  cross)    stage_cross ;;
-  smoke)    stage_smoke ;;
-  libxml2)  stage_libxml2 ;;
-  xs-fetch) stage_xs_fetch ;;
-  xs-smoke) stage_xs_smoke ;;
-  all)      stage_native && stage_cross && stage_smoke ;;
-  *) echo "unknown stage: $STAGE (native|purelib|cross|smoke|libxml2|xs-fetch|xs-smoke|all)" >&2; exit 1 ;;
+  native)      stage_native ;;
+  purelib)     stage_purelib ;;
+  cross)       stage_cross ;;
+  smoke)       stage_smoke ;;
+  libxml2)     stage_libxml2 ;;
+  xs-fetch)    stage_xs_fetch ;;
+  xs-smoke)    stage_xs_smoke ;;
+  biber)       stage_biber ;;
+  biber-smoke) stage_biber_smoke ;;
+  all)         stage_native && stage_cross && stage_smoke ;;
+  *) echo "unknown stage: $STAGE (native|purelib|cross|smoke|libxml2|xs-fetch|xs-smoke|biber|biber-smoke|all)" >&2; exit 1 ;;
 esac

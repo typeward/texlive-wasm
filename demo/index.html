@@ -8,15 +8,8 @@
       name="description"
       content="TeX Live 2026 compiled to WebAssembly: pdflatex, xelatex, lualatex, bibtexu, makeindex and xdvipdfmx running fully client-side."
     />
-    <!-- Cross-origin isolation shim for GitHub Pages: the engines are threaded
-         (SharedArrayBuffer) and Pages cannot send COOP/COEP headers, so a tiny
-         service worker injects them (one automatic reload on first visit).
-         shouldRegister makes it a hard no-op under vite dev/preview, which
-         already send the headers. Must be the first script on the page. -->
-    <script>
-      window.coi = { shouldRegister: () => !window.crossOriginIsolated };
-    </script>
-    <script src="coi-serviceworker.js"></script>
+    <!-- The engines are single-threaded wasm (no SharedArrayBuffer), so no
+         cross-origin isolation is needed — plain static hosting works. -->
   </head>
   <body>
     <div id="root"></div>

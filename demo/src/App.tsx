@@ -34,8 +34,6 @@ function currentTab(): TabId {
   return (TABS.some((t) => t.id === id) ? id : 'editor') as TabId;
 }
 
-const isolated = () => typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
-
 export function App() {
   const [tab, setTab] = createSignal<TabId>(currentTab());
   const onHash = () => setTab(currentTab());
@@ -73,22 +71,6 @@ export function App() {
           GitHub →
         </a>
       </header>
-
-      <Show when={!isolated()}>
-        <div
-          style={{
-            padding: '8px 16px',
-            background: '#fff3cd',
-            'border-bottom': '1px solid #ffe08a',
-            'font-size': '13px',
-            color: '#664d03',
-          }}
-        >
-          Enabling cross-origin isolation (required for the threaded engines) — the page reloads
-          once on first visit. If this message persists, your browser is blocking service workers
-          (e.g. Firefox private windows), and compilation is unavailable.
-        </div>
-      </Show>
 
       <nav style={{ display: 'flex', gap: '2px', padding: '6px 12px 0 12px', 'border-bottom': '1px solid #ddd' }}>
         <For each={TABS}>

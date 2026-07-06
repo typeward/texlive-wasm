@@ -40,7 +40,15 @@ See `plan.md` Phase 1 for design and the remaining ICU-data + fontconfig work.
 - **Asset delivery:** Tiered. Core bundle in npm package; full bundle downloadable or shipped as Tauri resource; CDN is the long-tail fallback.
 - **RPC:** Comlink over Web Workers. One worker per engine instance.
 - **PDF viewer:** pdf.js in the demo. Document PDFium-WASM for apps wanting peak speed.
-- **Biber:** Not shipped. bibtexu covers ~90% of bibliography needs; document the gap.
+- **Threading:** engines ship **single-threaded** (since v0.2.0-alpha). Android System WebView
+  cannot reliably provide crossOriginIsolated, and nothing in the engines spawns threads —
+  so no SharedArrayBuffer, no COOP/COEP, no coi-serviceworker. `ENABLE_THREADS=1` stays as
+  an opt-in make knob; CI pins `ENABLE_THREADS=0` and fails on `shared:true` in the glue.
+- **Bibliography (supersedes "Biber: Not shipped"):** biblatex works via `backend=bibtex`
+  (latexmk auto-detects it and runs bibtexu `--wolfgang`); CSL styles run in-engine under
+  lualatex via citeproc-lua. A **biber.wasm port is committed** (Perl 5.40 via perl-cross,
+  static XS, Emscripten; see the biber milestones) — until it ships, default-backend
+  biblatex documents do not resolve citations.
 - **Do not** copy code from texlyre-busytex (AGPL-3) or vendor SwiftLaTeX directly (AGPL-3).
 
 ## Working in this repo

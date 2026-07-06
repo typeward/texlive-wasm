@@ -57,7 +57,8 @@ The new project replaces every one of those points.
 
 ### Non-goals (initial release)
 
-- Biber. Defer to a future release; recommend `bibtexu` (Unicode BibTeX) for now.
+- ~~Biber. Defer to a future release; recommend `bibtexu` (Unicode BibTeX) for now.~~
+  Superseded 2026-07: biber.wasm port committed; biblatex(backend=bibtex) + CSL work today.
 - ConTeXt / LuaMetaTeX. Build a *pilot* (see §7) but not a v1 deliverable.
 - Shell-escape, `minted`, external SVG/EPS inclusion — fundamentally blocked by sandboxing.
 - A full editor. We ship the engine package; demo app is just a demo.
@@ -114,10 +115,10 @@ The three backends compose: a `core` bundle is preloaded in *every* target (so t
 | PDF preview | **pdf.js for the demo**, document **PDFium-WASM** path for apps that need speed | pdf.js: zero install. PDFium-wasm: ~2× faster on large docs. Tauri apps may prefer a native plugin. |
 | SyncTeX | Compiled to its own `synctex.wasm` | Forward + reverse lookup exposed in API |
 | Bundling | **Vite + vite-plugin-wasm + vite-plugin-top-level-await** | Matches the user's SolidJS+Vite+Tauri stack |
-| Threading | **pthreads via SharedArrayBuffer**, with COOP/COEP `credentialless` (web) — Tauri uses isolation by default | Parallel font/fmt init; graceful single-thread fallback |
+| Threading | **Single-threaded** (superseded 2026-07: Android System WebView cannot reliably provide crossOriginIsolated, and nothing in the engines spawns threads) | ENABLE_THREADS=1 stays a make knob; CI pins =0 + regression guard |
 | TL fork | **Hard fork of TeX-Live/texlive-source**, mobile-stripped (no Perl tools, no MetaPost, no mf-nowin, no docs/man) | User-confirmed for mobile size optimization |
 | License | **MIT** (wrapper) — engine artifacts inherit TL licenses (LPPL/GPL family) | User-confirmed |
-| Biber | **Not shipped** in v1 — bibtexu only | User-confirmed; document the gap in README |
+| Biber | **Superseded 2026-07: biber.wasm port committed** (Perl 5.40 via perl-cross + static XS). Until it ships: biblatex via backend=bibtex (bibtexu --wolfgang, auto-detected) + CSL styles in-engine via citeproc-lua | User-confirmed |
 
 ### What gets dropped vs busytex
 
@@ -163,7 +164,7 @@ These cut 3–5 s of cold-start. Built reproducibly in CI from a pinned `tlpkg/`
 
 ### Explicitly deferred / out-of-scope
 
-- Biber. Recommend bibtexu; document the gap.
+- Biber: biber.wasm port committed (2026-07); meanwhile biblatex(backend=bibtex) + citeproc-lua CSL.
 - ConTeXt. Pilot via LuaMetaTeX.
 - Tectonic-on-WASM. Watch tectonic#166; revisit when Tectonic's Rust slice covers enough of XeTeX to attempt a `wasm32-unknown-emscripten` build.
 
@@ -437,7 +438,7 @@ All initial open questions are resolved:
 | 3 | License | **MIT** wrapper; engines keep their TL licenses |
 | 4 | TL tracking | **Hard fork** of `TeX-Live/texlive-source`, mobile-stripped (no Perl tools, no MetaPost, no mf-nowin, no docs/man) |
 | 5 | PDF viewer | **pdf.js for the demo**, document PDFium-WASM for apps that need speed |
-| 6 | Biber | **Not in v1** — bibtexu only |
+| 6 | Biber | **biber.wasm port committed (2026-07)**; until it ships: biblatex via backend=bibtex + in-engine CSL |
 | 7 | Mobile shell | **Tauri 2.0 + SolidJS + Vite** is the primary mobile target (matches user's app stack) |
 
 ---

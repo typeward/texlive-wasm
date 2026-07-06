@@ -46,17 +46,13 @@ npm install
 npm run dev              # → http://localhost:1420
 ```
 
-## Cross-origin isolation
+## No cross-origin isolation needed
 
-The engines are threaded (`-pthread -sSHARED_MEMORY=1`), so the page must be
-cross-origin isolated for SharedArrayBuffer to exist:
-
-- `vite dev` / `vite preview` send the COOP/COEP headers directly
-  (`vite.config.ts`).
-- GitHub Pages cannot send headers, so `public/coi-serviceworker.js`
-  (vendored from [gzuidhof/coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker),
-  MIT) injects them via a service worker — one automatic reload on the first
-  visit, a no-op everywhere the headers are already present.
+The engines are single-threaded wasm (since v0.2.0-alpha) — no
+SharedArrayBuffer, so no COOP/COEP headers and no service-worker shims.
+Plain static hosting works, and dev/preview/production behave identically.
+(Earlier releases were `-pthread` builds and needed a vendored
+coi-serviceworker on GitHub Pages; that whole mechanism is gone.)
 
 ## Previewing the production build locally
 

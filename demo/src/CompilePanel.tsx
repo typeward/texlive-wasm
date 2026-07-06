@@ -20,8 +20,6 @@ export interface CompilePanelProps {
   onResult?: (result: LatexmkResult) => void;
 }
 
-const isolated = () => typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
-
 export function CompilePanel(props: CompilePanelProps) {
   const [contents, setContents] = createSignal<Record<string, string>>({});
   const [activePath, setActivePath] = createSignal('');
@@ -147,7 +145,7 @@ export function CompilePanel(props: CompilePanelProps) {
         <div style={{ display: 'flex', 'align-items': 'center', gap: '12px' }}>
           <button
             onClick={run}
-            disabled={busy() || !isolated()}
+            disabled={busy()}
             style={{
               padding: '8px 20px',
               'font-size': '14px',

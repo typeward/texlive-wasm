@@ -1,0 +1,14 @@
+# lualatex-specific core-tier additions: format, the Lua support trees
+# (luaotfload, lualibs, luatexbase — loaded on every run) and the OpenType
+# Latin Modern fonts the fontloader resolves by default.
+web2c/luatex/lualatex.fmt
+tex/luatex/**
+tex/lualatex/**
+# lualatexquotejobname.lua etc. — loaded by the format at startup.
+tex/latex/tex-ini-files/**
+scripts/luaotfload/**
+# UCA collation for in-engine CSL (citation-style-language).
+scripts/lua-uca/**
+fonts/opentype/public/lm/**
+fonts/opentype/public/lm-math/**
+tex/generic/unicode-data/**

@@ -1,0 +1,7 @@
+# xelatex-specific core-tier additions: format + the OpenType fonts the
+# default Latin Modern setup opens at runtime.
+web2c/xetex/xelatex.fmt
+fonts/opentype/public/lm/**
+fonts/opentype/public/lm-math/**
+tex/generic/unicode-data/**
+tex/xelatex/**

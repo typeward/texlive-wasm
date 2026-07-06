@@ -9,23 +9,14 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig({
   plugins: [solid(), wasm(), topLevelAwait()],
   clearScreen: false,
+  // The engines are single-threaded wasm — no COOP/COEP isolation needed,
+  // which is what makes them viable inside mobile WebViews at all.
   server: {
     port: 1420,
     strictPort: true,
     host: host || false,
     hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
-    headers: {
-      // Required for SharedArrayBuffer / threaded wasm.
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
     watch: { ignored: ['**/src-tauri/**'] },
-  },
-  preview: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {

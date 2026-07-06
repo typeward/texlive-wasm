@@ -100,6 +100,20 @@ type ModuleFactory = (
 /** Engines that speak web2c/kpathsea argv conventions (-fmt, -cnf-line). */
 const TEX_ENGINES: ReadonlySet<EngineId> = new Set(['pdflatex', 'xelatex', 'lualatex']);
 
+/** Minimal fontconfig config for XeTeX (see createInstance). */
+const FONTS_CONF = `<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir>/texmf-dist/fonts/opentype</dir>
+  <dir>/texmf-dist/fonts/truetype</dir>
+  <dir>/texmf-dist/fonts/type1</dir>
+  <cachedir>/tmp/fontcache</cachedir>
+  <config>
+    <rescan><int>0</int></rescan>
+  </config>
+</fontconfig>
+`;
+
 /**
  * Per-engine default `-fmt` path. Present once the TDS map has been
  * populated into MEMFS; consumers can override via RunOptions.env.
@@ -269,6 +283,17 @@ class WorkerImpl implements WorkerApi {
     mkdirCached(FS, '/bin', dirs);
     FS.writeFile(`/bin/${this.engineId}`, new Uint8Array());
     mkdirCached(FS, '/project', dirs);
+    // XeTeX resolves by-name font requests through fontconfig, which hard-
+    // fails at startup without a config file ("cannot read font names").
+    // Point it at the TDS font trees; both paths are probed by our build
+    // (/etc/fonts and the --prefix=/usr/local default).
+    if (this.engineId === 'xelatex') {
+      mkdirCached(FS, '/etc/fonts', dirs);
+      mkdirCached(FS, '/usr/local/etc/fonts', dirs);
+      mkdirCached(FS, '/tmp/fontcache', dirs);
+      FS.writeFile('/etc/fonts/fonts.conf', FONTS_CONF);
+      FS.writeFile('/usr/local/etc/fonts/fonts.conf', FONTS_CONF);
+    }
     if (!pathExists(FS, '/tmp')) FS.mkdir('/tmp');
     dirs.add('/tmp');
     // Writable cache root for luaotfload and friends (see TEXMFVAR/

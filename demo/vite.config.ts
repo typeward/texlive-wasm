@@ -7,12 +7,6 @@ import { resolve, sep } from 'node:path';
 
 const ENGINE_ARTIFACTS = resolve(__dirname, '../engine-artifacts');
 
-// SharedArrayBuffer (threaded wasm) requires cross-origin isolation.
-const COOP_COEP_HEADERS = {
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'require-corp',
-};
-
 /**
  * Serve `../engine-artifacts/*` at `/core/*` during `vite dev` and
  * `vite preview`. For production deploys the consumer is expected to host
@@ -83,13 +77,11 @@ export default defineConfig({
   base: './',
   plugins: [solid(), wasm(), topLevelAwait(), serveEngineArtifacts()],
   clearScreen: false,
+  // The engines are single-threaded wasm — no COOP/COEP isolation needed,
+  // dev and production (plain GitHub Pages) behave identically.
   server: {
     port: 1420,
     strictPort: true,
-    headers: COOP_COEP_HEADERS,
-  },
-  preview: {
-    headers: COOP_COEP_HEADERS,
   },
   build: {
     target: 'es2022',

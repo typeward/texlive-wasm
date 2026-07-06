@@ -6,7 +6,7 @@
  * formatted APA-style bibliography lands in the PDF run.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -56,7 +56,9 @@ const project = new Map([
 ]);
 
 async function runPass(label) {
-  const mod = await import(join(REPO, 'engine-artifacts/lualatex/emscripten/lualatex.js'));
+  const mod = await import(
+    pathToFileURL(join(REPO, 'engine-artifacts/lualatex/emscripten/lualatex.js')).href
+  );
   let out = '';
   const M = await mod.default({
     noInitialRun: true,

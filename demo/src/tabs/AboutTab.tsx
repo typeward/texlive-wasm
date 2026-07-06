@@ -66,8 +66,8 @@ export function AboutTab() {
       <h3 style={{ margin: '20px 0 8px 0' }}>Notes &amp; honest limitations</h3>
       <ul style={{ 'font-size': '14px', color: '#444', 'padding-left': '20px' }}>
         <li>
-          The engines are threaded (SharedArrayBuffer); GitHub Pages can't send COOP/COEP headers,
-          so a tiny service worker injects them — that's the one-time reload on first visit.
+          The engines are single-threaded wasm — no SharedArrayBuffer, no COOP/COEP headers, no
+          service-worker tricks. Plain static hosting (and mobile WebViews) just work.
         </li>
         <li>
           biblatex works via <code>backend=bibtex</code> (auto-detected; BibTeXu runs with{' '}

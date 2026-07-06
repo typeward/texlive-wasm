@@ -27,6 +27,36 @@ tex/latex/xkeyval/**
 tex/latex/koma-script/**
 tex/latex/l3kernel/**
 tex/latex/l3packages/**
+# Every document loads a l3backend driver; latexconfig/firstaid ship with base.
+tex/latex/l3backend/**
+tex/latex/latexconfig/**
+tex/latex/firstaid/**
+tex/latex/latex-fonts/**
+tex/latex/psnfss/**
+# hyperref/graphics support satellites — some live under tex/latex, some
+# under tex/generic depending on the TL snapshot, hence tex/*/.
+tex/*/kvoptions/**
+tex/*/kvsetkeys/**
+tex/*/kvdefinekeys/**
+tex/*/pdfescape/**
+tex/*/pdftexcmds/**
+tex/*/ltxcmds/**
+tex/*/infwarerr/**
+tex/*/epstopdf-pkg/**
+tex/*/auxhook/**
+tex/*/bitset/**
+tex/*/bigintcalc/**
+tex/*/etexcmds/**
+tex/*/gettitlestring/**
+tex/*/hycolor/**
+tex/*/intcalc/**
+tex/*/letltxmacro/**
+tex/*/refcount/**
+tex/*/rerunfilecheck/**
+tex/*/stringenc/**
+tex/*/uniquecounter/**
+tex/*/atbegshi/**
+tex/*/atveryend/**
 
 tex/generic/babel/**
 tex/generic/babel-english/**
@@ -36,12 +66,23 @@ tex/generic/iftex/**
 # Format-building inputs.
 tex/plain/**
 
-# Core font metrics + maps.
+# Core font metrics + maps. The updmap-generated pdftex.map/psfonts.map are
+# REQUIRED — without them pdfTeX dies at PDF finalization.
 fonts/tfm/public/cm/**
 fonts/tfm/public/amsfonts/**
 fonts/tfm/public/lm/**
+fonts/vf/public/lm/**
 fonts/map/dvips/cm/**
 fonts/map/dvips/lm/**
+fonts/map/pdftex/updmap/**
+fonts/map/dvips/updmap/**
+
+# Type1 glyphs actually embedded into PDFs (CM lives inside amsfonts).
+fonts/type1/public/amsfonts/**
+fonts/type1/public/lm/**
+fonts/enc/dvips/lm/**
+fonts/enc/dvips/base/**
+fonts/enc/dvips/cm-super/**
 
 # Core encoding / config.
 web2c/texmf.cnf

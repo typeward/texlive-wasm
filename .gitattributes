@@ -1,0 +1,11 @@
+# Files that execute inside Linux containers must stay LF even on Windows
+# checkouts — a CRLF shebang line means "cannot execute: required file not
+# found" when make exec's the script from the bind mount.
+*.sh text eol=lf
+*.mk text eol=lf
+Makefile text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.pl text eol=lf
+*.py text eol=lf
+engine/scripts/biber/perlcc text eol=lf

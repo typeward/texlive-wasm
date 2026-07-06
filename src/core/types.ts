@@ -40,6 +40,15 @@ export interface EngineConfig {
    * built from. Set false to give every run a pristine cache dir.
    */
   persistTexmfVar?: boolean;
+  /**
+   * Mount the TeX tree lazily (default: true on engines built with the
+   * wasmfs-lazy backend): file bytes stay on the JS side and are copied
+   * into the wasm heap only when the engine reads them — instead of
+   * materializing the entire tree into MEMFS per run. Set false to force
+   * eager materialization. Ignored (always eager) for biber and for
+   * artifacts without the backend.
+   */
+  lazyTds?: boolean;
   /** Whether to use a Web Worker (default: true in browser, false in Node). */
   useWorker?: boolean;
   /** Verbosity for engine stdout/stderr piped through the wrapper. */

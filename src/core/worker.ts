@@ -310,20 +310,110 @@ class WorkerImpl implements WorkerApi {
     // biber's VFS (biber-vfs.tar.gz: perl/ + biber/ trees) mounts at the
     // filesystem ROOT — it is a Perl runtime, not a texmf tree. Everything
     // else is TDS-relative under /texmf-dist.
-    const fsRoot = this.engineId === 'biber' ? '' : '/texmf-dist';
-    for (const [tdsPath, bytes] of this.tdsFiles) {
-      const absolute = `${fsRoot}/${tdsPath}`;
-      mkdirCached(FS, dirname(absolute), dirs);
-      FS.writeFile(absolute, bytes);
+    //
+    // TDS materialization has two paths:
+    //  - LAZY (preferred): engines built with the wasmfs-lazy backend keep
+    //    the file BYTES on the JS side; only cheap file nodes are created
+    //    and data is copied into the heap read-by-read. Saves ~250 MB of
+    //    heap per instance and nearly all of the per-run setup time.
+    //  - EAGER (permanent fallback): write every file into MEMFS — older
+    //    artifacts, biber, or any lazy-mount failure land here.
+    if (this.engineId === 'biber' || !this.tryMountLazyTds(module, dirs)) {
+      const fsRoot = this.engineId === 'biber' ? '' : '/texmf-dist';
+      for (const [tdsPath, bytes] of this.tdsFiles) {
+        const absolute = `${fsRoot}/${tdsPath}`;
+        mkdirCached(FS, dirname(absolute), dirs);
+        FS.writeFile(absolute, bytes);
+      }
     }
     if (this.engineId !== 'biber') {
       // Regenerate the kpathsea filename database from what is ACTUALLY in
       // the map — any bundled ls-R is stale the moment the lazy-fetch retry
       // adds a file, and with $TEXMFDBS set the db is authoritative. Keeping
-      // it exact turns every `//` search into an O(1) db hit.
+      // it exact turns every `//` search into an O(1) db hit. (Under the
+      // lazy mount the write lands in the handler's copy-on-write map.)
       FS.writeFile('/texmf-dist/ls-R', buildLsR(this.tdsFiles.keys()));
     }
     return module;
+  }
+
+  /**
+   * Mount /texmf-dist as a lazy WASMFS JSImpl tree (engine/scripts/
+   * wasmfs-lazy.c). Returns false when the artifact lacks the backend or
+   * anything goes wrong — the caller then materializes eagerly.
+   */
+  private tryMountLazyTds(module: EmscriptenModule, dirs: Set<string>): boolean {
+    if (this.config?.lazyTds === false) return false;
+    const m = module as EmscriptenModule & {
+      _texlive_mount_lazy?: () => number;
+      _texlive_touch?: (pathPtr: number) => number;
+      stringToUTF8?: (str: string, ptr: number, max: number) => void;
+      texliveLazyBackend?: unknown;
+    };
+    if (!m._texlive_mount_lazy || !m._texlive_touch || !m.stringToUTF8) return false;
+    try {
+      // Per-instance handler: file id → bytes (tar-backed views for touched
+      // nodes, copy-on-write for anything the engine writes, e.g. ls-R).
+      const fileBytes = new Map<number, Uint8Array>();
+      let pending: Uint8Array | null = null;
+      m.texliveLazyBackend = {
+        allocFile: (file: number) => {
+          if (pending) {
+            fileBytes.set(file, pending);
+            pending = null;
+          }
+        },
+        freeFile: (file: number) => {
+          fileBytes.delete(file);
+        },
+        getSize: (file: number) => fileBytes.get(file)?.length ?? 0,
+        read: (file: number, buffer: number, length: number, offset: number) => {
+          const bytes = fileBytes.get(file);
+          if (!bytes || offset >= bytes.length) return 0;
+          const n = Math.min(length, bytes.length - offset);
+          module.HEAPU8.set(bytes.subarray(offset, offset + n), buffer);
+          return n;
+        },
+        write: (file: number, buffer: number, length: number, offset: number) => {
+          const prev = fileBytes.get(file) ?? new Uint8Array(0);
+          let next: Uint8Array;
+          if (prev.length >= offset + length) {
+            next = prev.slice();
+          } else {
+            next = new Uint8Array(offset + length);
+            next.set(prev);
+          }
+          next.set(module.HEAPU8.subarray(buffer, buffer + length), offset);
+          fileBytes.set(file, next);
+          return length;
+        },
+        setSize: (file: number, size: number) => {
+          const prev = fileBytes.get(file) ?? new Uint8Array(0);
+          const next = new Uint8Array(size);
+          next.set(prev.subarray(0, Math.min(size, prev.length)));
+          fileBytes.set(file, next);
+          return 0;
+        },
+      };
+      if (m._texlive_mount_lazy() !== 0) return false;
+      dirs.add('/texmf-dist');
+      const scratch = module._malloc(4096);
+      try {
+        for (const [tdsPath, bytes] of this.tdsFiles) {
+          const absolute = `/texmf-dist/${tdsPath}`;
+          mkdirCached(module.FS, dirname(absolute), dirs);
+          pending = bytes;
+          m.stringToUTF8(absolute, scratch, 4096);
+          m._texlive_touch(scratch);
+          pending = null; // a failed touch must not leak onto the next node
+        }
+      } finally {
+        module._free(scratch);
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async run(opts: RunOptions): Promise<RunResult> {

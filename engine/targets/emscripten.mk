@@ -45,8 +45,8 @@ EMCC_COMMON := \
 	-sSTACK_SIZE=8388608 \
 	-sMODULARIZE=1 \
 	-sEXPORT_ES6=1 \
-	-sEXPORTED_RUNTIME_METHODS=FS,callMain,PATH,HEAPU8,HEAPU32 \
-	-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_udata_setCommonData_78 \
+	-sEXPORTED_RUNTIME_METHODS=FS,callMain,PATH,HEAPU8,HEAPU32,stringToUTF8 \
+	-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_udata_setCommonData_78,_texlive_mount_lazy,_texlive_touch \
 	-sENVIRONMENT=worker,web,node \
 	-sFORCE_FILESYSTEM=1 \
 	-sEXIT_RUNTIME=0 \
@@ -413,7 +413,10 @@ $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$
 	  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1 && \
 	  STUBS_O=$$$$OUT_DIR/stubs.o && \
 	  emcc -Oz -c $$(ROOT)/scripts/stubs.c -o $$$$STUBS_O 2>/dev/null && \
-	  em++ $$(EMCC_COMMON) -o $$$$OUT_DIR/$(1).js $$$$OBJS $$$$STUBS_O $$$$ARCS $$(TL_LINK_EXTRA_$(1)) \
+	  LAZY_O=$$$$OUT_DIR/wasmfs-lazy.o && \
+	  emcc -Oz -c $$(ROOT)/scripts/wasmfs-lazy.c -o $$$$LAZY_O && \
+	  em++ $$(EMCC_COMMON) --js-library $$(ROOT)/scripts/wasmfs-lazy-lib.js \
+	    -o $$$$OUT_DIR/$(1).js $$$$OBJS $$$$STUBS_O $$$$LAZY_O $$$$ARCS $$(TL_LINK_EXTRA_$(1)) \
 	    > $$$$OUT_DIR/link.log 2>&1 \
 	  || (echo "==> [emscripten] $(1) — link FAILED:"; tail -30 $$$$OUT_DIR/link.log; exit 1); \
 	else \

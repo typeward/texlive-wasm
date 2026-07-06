@@ -1,0 +1,40 @@
+#!/bin/bash
+#
+# perlcc — cc wrapper for Perl's Configure + make under Emscripten.
+#
+# Two jobs (technique from zeroperl's `wasic`, MIT):
+#  1. Configure compiles dozens of probe programs to `try` and RUNS
+#     `./try` on the build host. A wasm binary can't exec, so probes are
+#     compiled with the HOST compiler instead — the hints file pre-answers
+#     everything architecture-critical, probes only fill in behavioral
+#     details where host ≈ target is close enough.
+#  2. Everything else goes through emcc with our fixed flag set.
+#
+# PERLCC_FORCE_HOST=1 forces the host path (used for generate_uudmap etc.).
+
+set -u
+
+is_probe=0
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then
+    case "$(basename "$arg")" in
+      try|try.*|a.out) is_probe=1 ;;
+    esac
+  fi
+  prev="$arg"
+done
+
+if [ "${PERLCC_FORCE_HOST:-0}" = "1" ] || [ "$is_probe" = "1" ]; then
+  exec cc "$@"
+fi
+
+# Emscripten path. -sSUPPORT_LONGJMP=emscripten: Perl's eval/die is
+# setjmp/longjmp; the emscripten (JS) variant works everywhere including
+# older WebViews, and unlike wasi-sdk needs no custom sjlj runtime.
+# (Callers should have emsdk on PATH already — sourcing emsdk_env per
+# compiler invocation would add seconds to every file.)
+if ! command -v emcc >/dev/null 2>&1; then
+  source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1
+fi
+exec emcc -sSUPPORT_LONGJMP=emscripten "$@"

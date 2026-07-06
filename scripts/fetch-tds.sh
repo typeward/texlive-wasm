@@ -71,8 +71,19 @@ if [ ! -f "$MAPS/dvips/updmap/psfonts.map" ] && [ -f "$MAPS/dvips/updmap/psfonts
   cp "$MAPS/dvips/updmap/psfonts_t1.map" "$MAPS/dvips/updmap/psfonts.map"
 fi
 ls -la "$MAPS/pdftex/updmap/" || true
-echo "[+] removing broken symlinks..."
-find /workspace/engine-artifacts/texmf -type l -delete
+echo "[+] materializing symlinks (Debian ships some package files as links)..."
+# Deleting all symlinks used to eat real files — pdftex.map first, then
+# biblatex.sty (texlive-bibtex-extra links it). Resolve each link inside
+# the container (where the target tree still exists) and copy the bytes;
+# only links without a real file target (dirs, dangling) are dropped.
+find /workspace/engine-artifacts/texmf -type l | while read -r link; do
+  target=$(readlink -f "$link" || true)
+  if [ -n "$target" ] && [ -f "$target" ]; then
+    cp --remove-destination "$target" "$link"
+  else
+    rm -f "$link"
+  fi
+done
 # Wipe any leftover ls-R that points to the distro path.
 rm -f /workspace/engine-artifacts/texmf/ls-R
 echo "[+] trimming assets unusable in the WASM/PDF-only build..."

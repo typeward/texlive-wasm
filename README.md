@@ -74,6 +74,27 @@ public/texlive-wasm/
 └── texmf/                # core TDS slice (optional; ~360 MB unpacked)
 ```
 
+## Version contract
+
+One rule: **the wrapper's npm version, the engine-assets release tag, and
+the manifest version are always the same.** `texlive-wasm@0.2.0` on npm
+pairs with GitHub Release `v0.2.0`, and `npx texlive-wasm download-assets`
+defaults to exactly that tag (`v<package.json version>`).
+
+Engine assets are only guaranteed to work with the same-version wrapper.
+The SHA-256 checks against `checksums.json` enforce integrity; the version
+rule enforces compatibility — mixing a wrapper from one release with
+assets from another is unsupported.
+
+Downstream apps (the Typeward app included) should pin an exact version —
+`"texlive-wasm": "0.2.0"`, no `^`/`~` — so the wrapper and its assets can
+never drift apart across installs.
+
+npm dist-tags follow the release channel: stable versions publish as
+`latest`; `-alpha`/`-beta` prereleases publish under `next`, so
+`npx texlive-wasm` and a bare `npm install texlive-wasm` never resolve a
+prerelease by accident. Opt in with `npm install texlive-wasm@next`.
+
 ## Usage
 
 ### Basic — one engine, one file
@@ -221,6 +242,12 @@ The release workflow is matrix-built per engine, packs via
 `scripts/pack-release.mjs`, and attaches everything to the GitHub
 Release. The `texlive-wasm` CLI then fetches from
 `releases/download/<tag>/<asset>`.
+
+Once the release assets are up, the workflow publishes the wrapper to npm
+via [trusted publishing](https://docs.npmjs.com/trusted-publishers)
+(OIDC — no token secret). A guard step fails the publish if
+`package.json` doesn't match the tag, and prereleases land on the `next`
+dist-tag per the [version contract](#version-contract).
 
 ## Layout
 

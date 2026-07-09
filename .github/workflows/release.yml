@@ -2,7 +2,8 @@ name: release
 
 # Tag-driven release: builds every engine via the docker toolchain, packs
 # the artifacts into per-engine tar.gz files (scripts/pack-release.mjs),
-# and attaches them to the GitHub Release for the pushed tag.
+# attaches them to the GitHub Release for the pushed tag, and then
+# publishes the wrapper package to npm via trusted publishing (OIDC).
 #
 # Trigger:
 #   git tag v0.1.0 && git push --tags
@@ -151,3 +152,64 @@ jobs:
             release/checksums.json
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  # npm trusted publishing (OIDC) — no NPM_TOKEN secret anywhere. One-time
+  # setup on npmjs.com: trusted publisher for repo typeward/texlive-wasm,
+  # workflow release.yml, with "publish only via trusted publisher" enabled.
+  # Provenance attestations are generated automatically under trusted
+  # publishing (requires npm CLI >= 11.5.1).
+  #
+  # Runs only after the engine assets are live on the GitHub Release, so a
+  # freshly published wrapper can always `download-assets` its own tag.
+  publish-npm:
+    needs: pack-and-release
+    # Forks that enable Actions would reach the OIDC exchange and fail
+    # noisily; the trusted publisher is scoped to this repo only.
+    if: github.repository == 'typeward/texlive-wasm'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm >= 11.5.1; node 20 bundles npm 10.x.
+      - run: npm install -g 'npm@^11.5.1'
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: version guard — package.json must match the release tag
+        # Version contract (release-ops plan §2): wrapper npm version ==
+        # engine-assets release tag == manifest version. The CLI's
+        # download-assets defaults to tag v<package.json version>, so a
+        # mismatched publish would fetch assets that don't exist.
+        run: |
+          pkg_version=$(node -p "require('./package.json').version")
+          if [ "v$pkg_version" != "$RELEASE_TAG" ]; then
+            echo "::error::package.json version ($pkg_version) does not match release tag ($RELEASE_TAG) — bump package.json and re-tag"
+            exit 1
+          fi
+
+      - name: publish to npm
+        # Dist-tag policy: stable versions publish as `latest`; prereleases
+        # (-alpha/-beta/…) publish under `next` so `npx texlive-wasm` and a
+        # bare `npm install texlive-wasm` never resolve a prerelease by
+        # accident.
+        run: |
+          pkg_version=$(node -p "require('./package.json').version")
+          case "$pkg_version" in
+            *-*) dist_tag=next ;;
+            *)   dist_tag=latest ;;
+          esac
+          echo "publishing texlive-wasm@$pkg_version (dist-tag: $dist_tag)"
+          npm publish --access public --tag "$dist_tag"

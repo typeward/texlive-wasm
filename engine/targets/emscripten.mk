@@ -41,7 +41,7 @@ EMCC_COMMON := \
 	-sALLOW_MEMORY_GROWTH=1 \
 	-sMEMORY_GROWTH_GEOMETRIC_STEP=0.5 \
 	-sINITIAL_MEMORY=33554432 \
-	-sMAXIMUM_MEMORY=2147483648 \
+	-sMAXIMUM_MEMORY=$(MAX_MEMORY) \
 	-sSTACK_SIZE=8388608 \
 	-sMODULARIZE=1 \
 	-sEXPORT_ES6=1 \
@@ -51,6 +51,20 @@ EMCC_COMMON := \
 	-sFORCE_FILESYSTEM=1 \
 	-sEXIT_RUNTIME=0 \
 	-sINVOKE_RUN=0
+
+# Link inputs that live outside the TL tree, plus the makefiles that spell the
+# link out. Without these as prerequisites the .wasm looks up to date after any
+# edit to the lazy-FS glue, the stubs or the flags above — which is how an
+# artifact missing _texlive_mount_lazy survives a rebuild and silently degrades
+# to the eager path at runtime. The recipe is monolithic (configure + make +
+# link), so a touched prerequisite re-runs all of it: correctness over speed,
+# and CI builds from a clean tree anyway.
+EM_LINK_DEPS := \
+	$(ROOT)/scripts/wasmfs-lazy.c \
+	$(ROOT)/scripts/wasmfs-lazy-lib.js \
+	$(ROOT)/scripts/stubs.c \
+	$(ROOT)/scripts/stubs_force.h \
+	$(MAKEFILE_LIST)
 
 # Engines we know how to configure today. Anything not in this list builds as
 # a no-op stub (so `make all` still enumerates cleanly, but only listed
@@ -309,11 +323,9 @@ define ENGINE_TEMPLATE_em
 .PHONY: $(1)-emscripten
 $(1)-emscripten: $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm
 
-$$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$(1)),$$(ICU_NATIVE_DONE)) $$(if $$(TL_NEEDS_FC_$(1)),$$(WASM_LIBS_DONE)) | source
+$$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$(1)),$$(ICU_NATIVE_DONE)) $$(if $$(TL_NEEDS_FC_$(1)),$$(WASM_LIBS_DONE)) $$(EM_LINK_DEPS) | source
 	@if [ -z "$$(TL_CONFIGURE_FLAG_$(1))" ]; then \
-	  echo "==> [emscripten] $(1) — no configure flag wired yet, emitting stub"; \
-	  mkdir -p $$(BUILD_DIR)/$(1)/emscripten; \
-	  touch $$@ $$(BUILD_DIR)/$(1)/emscripten/$(1).js; \
+	  echo "==> [emscripten] $(1) — no configure flag wired yet; nothing built"; \
 	  exit 0; \
 	fi; \
 	echo "==> [emscripten] $(1) — configure (wrapped CC, native helpers preloaded)"; \
@@ -430,7 +442,14 @@ $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$
 	  cp $$$$BIN $$$$OUT_DIR/$(1).js; \
 	  [ -f $$$$BIN.wasm ] && cp $$$$BIN.wasm $$@ || cp $$$$BIN $$@; \
 	fi; \
-	test -f $$@ || cp $$$$OUT_DIR/$(1).js $$@.tmp; \
+	if [ ! -s $$@ ]; then \
+	  echo "==> [emscripten] $(1) — FAILED: the link left no $(1).wasm behind (see $$$$OUT_DIR/link.log)"; \
+	  exit 1; \
+	fi; \
+	if [ "$$$$(od -An -tx1 -N4 $$@ | tr -d ' \n')" != "0061736d" ]; then \
+	  echo "==> [emscripten] $(1) — FAILED: $(1).wasm carries no wasm magic (JS glue copied over it?)"; \
+	  exit 1; \
+	fi; \
 	echo "==> [emscripten] $(1) — DONE"; \
 	ls -la $$$$OUT_DIR/
 endef

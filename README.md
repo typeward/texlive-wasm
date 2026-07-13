@@ -3,9 +3,14 @@
 > Pre-alpha. The wrapper API and CLI are stable enough to build against; the
 > engine release tarballs are produced from a hard fork of TeX Live 2026.
 
-Run TeX Live in WebAssembly. Compiles LaTeX → PDF in the browser, in a
-Tauri / Capacitor mobile app, in Node, and under Wasmtime on the edge —
-from the same C sources, with one `.wasm` per engine.
+Run TeX Live in WebAssembly. Compiles LaTeX → PDF in the browser and in a
+Tauri / Capacitor mobile app, with one `.wasm` per engine.
+
+**Runtime support today:** anywhere a Web Worker runs — browsers, the Tauri
+WebView, Capacitor. **Node and the WASI edge are not implemented:** the same
+C sources do build a WASI target, but the wrapper has no in-process runner
+for it, so `createEngine()` throws outside a Worker-capable host. Treat that
+target as experimental and unpublished (see the table below).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Live demo](https://img.shields.io/badge/live%20demo-typeward.github.io%2Ftexlive--wasm-2f3e55)](https://typeward.github.io/texlive-wasm/)
@@ -27,11 +32,11 @@ commit `fb61589266`):
 | biber           | `biber.wasm` (+14 MB VFS) | 9.1 MB  | biber 2.19 on Perl 5.42 — `.bbl` output byte-identical to native      |
 | xdvipdfmx       | `xdvipdfmx.wasm`          | 765 KB  | instantiates                                                          |
 | makeindex       | `makeindex.wasm`          | 192 KB  | instantiates                                                          |
-| pdfLaTeX (WASI) | `pdflatex.wasm` (wasi-sdk)| 2.0 MB  | Node / Wasmtime / edge — build locally; not in published releases yet |
+| pdfLaTeX (WASI) | `pdflatex.wasm` (wasi-sdk)| 2.0 MB  | **not implemented** — the artifact builds locally, but no JS runner drives it and it is not published |
 
 SyncTeX is built into every engine. The JS parser in `src/synctex/`
-currently extracts the input-file list; forward/reverse position lookup
-is scheduled for Phase 4.
+currently extracts the input-file list only; `forward()` and `reverse()`
+return an empty list — position lookup is scheduled for Phase 4.
 
 ## Install
 
@@ -86,6 +91,14 @@ The SHA-256 checks against `checksums.json` enforce integrity; the version
 rule enforces compatibility — mixing a wrapper from one release with
 assets from another is unsupported.
 
+The rule is enforced, not just documented. `download-assets` compares the
+wrapper's version, the release tag and the `version` field inside that
+release's `checksums.json`, and refuses to install a mismatched set
+(`--allow-version-mismatch` downgrades it to a warning). `pack-release.mjs`
+refuses to stamp a `checksums.json` under a version `package.json` does not
+carry, and the release workflow rejects a tag that does not match
+`package.json`.
+
 Downstream apps (the Typeward app included) should pin an exact version —
 `"texlive-wasm": "0.2.0"`, no `^`/`~` — so the wrapper and its assets can
 never drift apart across installs.
@@ -94,6 +107,27 @@ npm dist-tags follow the release channel: stable versions publish as
 `latest`; `-alpha`/`-beta` prereleases publish under `next`, so
 `npx texlive-wasm` and a bare `npm install texlive-wasm` never resolve a
 prerelease by accident. Opt in with `npm install texlive-wasm@next`.
+
+## Asset integrity
+
+A TDS bundle is the entire TeX tree the engine executes — its formats, its
+config, every package a document can `\input`. The library therefore refuses
+to load one it cannot pin:
+
+- **Bundles** must either be same-origin (the app serving its own assets,
+  including Tauri resources) or carry a SHA-256 — `coreBundleSha256` in the
+  manifest, or `EngineConfig.bundleSha256`. A cross-origin bundle with no
+  digest throws.
+- **CDN and cached files** are checked against the manifest's per-file
+  `sha256` on the way out of FetchFS and the OPFS cache; a mismatch is
+  reported as a miss, never as bytes the engine sees. Setting `cdnBaseUrl`
+  without a readable `manifestUrl` throws for the same reason.
+- **Archives** are bounded (compressed size, expanded size, entry count) and
+  every entry name is confined to the tree — `..`, absolute and duplicate
+  entries are dropped.
+
+`EngineConfig.allowUnverifiedAssets: true` turns the first two off. It is a
+development escape hatch; do not ship it.
 
 ## Usage
 
@@ -132,6 +166,10 @@ if (result.exitCode === 0) {
 
 ### Multi-pass — bibtex + makeindex + rerun
 
+`latexmk` drives several engines (the TeX engine plus bibtexu / biber /
+makeindex / xdvipdfmx as the document needs them), and each is its own wasm
+artifact — so it needs `engineConfig` to know where they live:
+
 ```ts
 import { latexmk } from 'texlive-wasm';
 
@@ -144,8 +182,18 @@ const out = await latexmk({
   ],
   bibtex: true,
   makeindex: true,
+  // One config for every engine latexmk builds; pass a function to vary it.
+  engineConfig: (id) => ({
+    enginePath: `/texlive-wasm/${id}/emscripten/${id}.wasm`,
+    bundleUrl: `/texlive-wasm/texmf-core-${id}.tar.gz`,
+  }),
+  // Optional: a deadline for the whole pipeline, passes and helpers included.
+  timeoutMs: 120_000,
 });
 ```
+
+Apps that keep engines alive across compiles should hand latexmk the handles
+instead — see `createEngineManager` in the API surface below.
 
 ### Lower level — direct argv
 

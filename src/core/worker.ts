@@ -26,6 +26,7 @@ import type { EngineConfig, EngineId, RunOptions, RunResult, VfsBackend } from '
 import { createBundleFs } from '../vfs/bundlefs';
 import { loadManifest } from './manifest';
 import { buildLsR } from './lsr';
+import { safeRelativePath, safeResolve } from './paths';
 
 /** Cloneable capability descriptor for one VFS backend. */
 export interface BackendMeta {
@@ -55,6 +56,15 @@ export interface WorkerInitOptions {
   backendMeta?: BackendMeta[];
   /** Optional: bytes of `icudt78l.dat`. Required for xelatex + bibtexu locale ops. */
   icuData?: Uint8Array;
+  /**
+   * Build the manifest's core BundleFS in here rather than on the main
+   * thread. Set by createEngine when it owns the backend chain: a
+   * main-thread BundleFS would hold the whole TDS twice (once per side) and
+   * ship every one of its ~17k files across the RPC boundary one read at a
+   * time. Not set when the caller supplied an explicit `vfs` chain — that
+   * chain is theirs to arrange.
+   */
+  bundleFromManifest?: boolean;
 }
 
 export interface WorkerApi {
@@ -124,6 +134,32 @@ const FMT_PATH: Partial<Record<EngineId, string>> = {
   lualatex: '/texmf-dist/web2c/luatex/lualatex.fmt',
 };
 
+/** The diagnostic file each tool writes; xdvipdfmx has none (stderr only). */
+const LOG_EXT: Partial<Record<EngineId, string>> = {
+  pdflatex: '.log',
+  xelatex: '.log',
+  lualatex: '.log',
+  bibtexu: '.blg',
+  biber: '.blg',
+  makeindex: '.ilg',
+};
+
+/** The argument each tool takes its job stem from. */
+const INPUT_ARG_RE: Partial<Record<EngineId, RegExp>> = {
+  pdflatex: /\.(tex|ltx)$/i,
+  xelatex: /\.(tex|ltx)$/i,
+  lualatex: /\.(tex|ltx)$/i,
+  bibtexu: /\.aux$/i,
+  biber: /\.bcf$/i,
+  makeindex: /\.idx$/i,
+  xdvipdfmx: /\.xdv$/i,
+};
+
+/** A caller that passes -fmt= or builds a format with -ini owns the choice. */
+function selectsOwnFormat(args: string[]): boolean {
+  return args.some((a) => /^--?(fmt|ini|initialize)\b/.test(a));
+}
+
 class WorkerImpl implements WorkerApi {
   private engineId: EngineId | null = null;
   private config: EngineConfig | null = null;
@@ -154,6 +190,10 @@ class WorkerImpl implements WorkerApi {
    * guessing heuristic stays as fallback for unindexed names.
    */
   private nameIndex = new Map<string, string[]>();
+  /** Whether the last created instance mounted the TDS lazily (see tryMountLazyTds). */
+  private lazyMounted = false;
+  /** The eager-fallback warning is worth saying once, not once per instance. */
+  private eagerWarned = false;
   // Stable sinks bound at module-factory time. Emscripten's glue captures
   // print/printErr into internal out/err ONCE at instantiation — reassigning
   // module.print afterwards has no effect, so the closures must stay fixed
@@ -168,11 +208,22 @@ class WorkerImpl implements WorkerApi {
       reconstructBackend(meta, i, host ?? null),
     );
 
-    // A bundleUrl is fetched and unpacked here in the worker (highest
+    // The core bundle is fetched and unpacked here in the worker (highest
     // priority backend) — the browser HTTP cache dedupes the download
     // across engine instances and no file bytes cross the RPC boundary.
+    const allowUnverified = opts.config.allowUnverifiedAssets === true;
     if (opts.config.bundleUrl) {
-      this.backends.unshift(await createBundleFs({ bundleUrl: opts.config.bundleUrl }));
+      this.backends.unshift(
+        await createBundleFs({
+          bundleUrl: opts.config.bundleUrl,
+          ...(opts.config.bundleSha256 ? { sha256: opts.config.bundleSha256 } : {}),
+          allowUnverified,
+        }),
+      );
+    } else if (opts.bundleFromManifest && opts.config.manifestUrl) {
+      this.backends.unshift(
+        await createBundleFs({ manifestUrl: opts.config.manifestUrl, allowUnverified }),
+      );
     }
 
     for (const b of this.backends) {
@@ -214,8 +265,12 @@ class WorkerImpl implements WorkerApi {
       if (!backend.list) continue;
       const paths = await backend.list('');
       for (const tdsPath of paths) {
+        // A backend's own listing is not automatically trustworthy — an
+        // archive it unpacked chose these names.
+        const rel = safeRelativePath(tdsPath);
+        if (!rel) continue;
         const bytes = await backend.read(tdsPath);
-        if (bytes) this.tdsFiles.set(stripLeadingSlash(tdsPath), bytes);
+        if (bytes) this.tdsFiles.set(rel, bytes);
       }
     }
 
@@ -305,7 +360,6 @@ class WorkerImpl implements WorkerApi {
       mkdirCached(FS, dirname(absolute), dirs);
       FS.writeFile(absolute, bytes);
     }
-    mkdirCached(FS, '/texmf-dist', dirs);
 
     // biber's VFS (biber-vfs.tar.gz: perl/ + biber/ trees) mounts at the
     // filesystem ROOT — it is a Perl runtime, not a texmf tree. Everything
@@ -318,8 +372,14 @@ class WorkerImpl implements WorkerApi {
     //    heap per instance and nearly all of the per-run setup time.
     //  - EAGER (permanent fallback): write every file into MEMFS — older
     //    artifacts, biber, or any lazy-mount failure land here.
-    if (this.engineId === 'biber' || !this.tryMountLazyTds(module, dirs)) {
+    //
+    // The lazy mount MUST be attempted before anything creates /texmf-dist:
+    // wasmfs_create_directory is mkdir-like, so mounting onto an existing
+    // directory fails with EEXIST and silently drops us into the eager path.
+    this.lazyMounted = this.engineId === 'biber' ? false : this.tryMountLazyTds(module, dirs);
+    if (!this.lazyMounted) {
       const fsRoot = this.engineId === 'biber' ? '' : '/texmf-dist';
+      if (fsRoot) mkdirCached(FS, fsRoot, dirs);
       for (const [tdsPath, bytes] of this.tdsFiles) {
         const absolute = `${fsRoot}/${tdsPath}`;
         mkdirCached(FS, dirname(absolute), dirs);
@@ -341,6 +401,10 @@ class WorkerImpl implements WorkerApi {
    * Mount /texmf-dist as a lazy WASMFS JSImpl tree (engine/scripts/
    * wasmfs-lazy.c). Returns false when the artifact lacks the backend or
    * anything goes wrong — the caller then materializes eagerly.
+   *
+   * Every failure path is announced: the eager fallback still produces the
+   * right PDF, so a silent degradation is invisible until an engine instance
+   * has copied a quarter of a gigabyte into the heap and the WebView dies.
    */
   private tryMountLazyTds(module: EmscriptenModule, dirs: Set<string>): boolean {
     if (this.config?.lazyTds === false) return false;
@@ -350,7 +414,12 @@ class WorkerImpl implements WorkerApi {
       stringToUTF8?: (str: string, ptr: number, max: number) => void;
       texliveLazyBackend?: unknown;
     };
-    if (!m._texlive_mount_lazy || !m._texlive_touch || !m.stringToUTF8) return false;
+    if (!m._texlive_mount_lazy || !m._texlive_touch || !m.stringToUTF8) {
+      this.warnEagerFallback(
+        'the engine artifact does not export the lazy WASMFS backend (rebuild it)',
+      );
+      return false;
+    }
     try {
       // Per-instance handler: file id → bytes (tar-backed views for touched
       // nodes, copy-on-write for anything the engine writes, e.g. ls-R).
@@ -395,25 +464,54 @@ class WorkerImpl implements WorkerApi {
           return 0;
         },
       };
-      if (m._texlive_mount_lazy() !== 0) return false;
+      const mountRc = m._texlive_mount_lazy();
+      if (mountRc !== 0) {
+        // -EEXIST here means something created /texmf-dist before the mount.
+        this.warnEagerFallback(`texlive_mount_lazy() failed with ${mountRc}`);
+        return false;
+      }
       dirs.add('/texmf-dist');
       const scratch = module._malloc(4096);
+      let failedTouch: string | null = null;
       try {
         for (const [tdsPath, bytes] of this.tdsFiles) {
           const absolute = `/texmf-dist/${tdsPath}`;
           mkdirCached(module.FS, dirname(absolute), dirs);
           pending = bytes;
           m.stringToUTF8(absolute, scratch, 4096);
-          m._texlive_touch(scratch);
+          const rc = m._texlive_touch(scratch);
           pending = null; // a failed touch must not leak onto the next node
+          if (rc !== 0) {
+            // One unreachable file would surface much later as a mysterious
+            // "I can't find file" — fail the mount instead and materialize
+            // the tree the slow way, which cannot miss a file.
+            failedTouch = `${absolute} (rc=${rc})`;
+            break;
+          }
         }
       } finally {
         module._free(scratch);
       }
+      if (failedTouch) {
+        this.warnEagerFallback(`texlive_touch() failed for ${failedTouch}`);
+        return false;
+      }
       return true;
-    } catch {
+    } catch (err) {
+      this.warnEagerFallback(`lazy mount threw (${String(err)})`);
       return false;
     }
+  }
+
+  /** Once per worker: a compile builds several instances, all with the same verdict. */
+  private warnEagerFallback(reason: string): void {
+    if (this.eagerWarned) return;
+    this.eagerWarned = true;
+    console.warn(
+      `texlive-wasm: ${this.engineId} is materializing the TeX tree eagerly because ` +
+        `${reason}. Every engine instance now copies the whole tree into the wasm heap; ` +
+        `on a mobile WebView that is a likely out-of-memory.`,
+    );
   }
 
   async run(opts: RunOptions): Promise<RunResult> {
@@ -437,22 +535,41 @@ class WorkerImpl implements WorkerApi {
     let outputs = new Map<string, Uint8Array>();
     let log = '';
 
+    // What we wrote into /project, so the run can hand back only what the
+    // engine actually produced (see collectProduced).
+    const inputs = new Map<string, Uint8Array>();
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       let module: EmscriptenModule;
       let FS: EmscriptenFS;
       try {
         module = await this.createInstance();
         FS = module.FS;
+        inputs.clear();
         for (const file of opts.files ?? []) {
-          const absolute = `/project/${stripLeadingSlash(file.path)}`;
+          const rel = safeRelativePath(file.path);
+          if (!rel) {
+            throw new Error(
+              `texlive-wasm: refusing file input with an escaping path: ${file.path}`,
+            );
+          }
+          const bytes = normalizeBytes(file.content);
+          const absolute = `/project/${rel}`;
           mkdirP(FS, dirname(absolute));
-          FS.writeFile(absolute, normalizeBytes(file.content));
+          FS.writeFile(absolute, bytes);
+          inputs.set(rel, bytes);
         }
       } catch (err) {
         rethrowIfOom(err);
         throw err;
       }
-      FS.chdir(opts.cwd ?? '/project');
+      // The engine reads and writes relative to the cwd, so an unconfined one
+      // is a write primitive anywhere in the tree.
+      const cwd = safeResolve('/project', opts.cwd ?? '/project');
+      if (!cwd) {
+        throw new Error(`texlive-wasm: refusing a cwd outside /project: ${opts.cwd}`);
+      }
+      FS.chdir(cwd);
 
       const argv = [...this.standardArgs(FS, opts), ...opts.args];
 
@@ -473,8 +590,8 @@ class WorkerImpl implements WorkerApi {
       stderr += this.stderrBuf;
 
       outputs = new Map<string, Uint8Array>();
-      collectFiles(FS, '/project', '', outputs);
-      log = findLog(FS, opts.args);
+      collectProduced(FS, '/project', '', inputs, outputs);
+      log = this.findLog(FS, opts.args);
 
       // Harvest engine-written caches (luaotfload font db, etc.) for the
       // next instance — even failed compiles usually completed the cache
@@ -489,14 +606,15 @@ class WorkerImpl implements WorkerApi {
 
       if (exitCode === 0 || attempt === maxRetries) break;
 
-      const missing = parseMissingFiles(log);
+      // xdvipdfmx writes no log file — its complaints only exist on stderr.
+      const missing = parseMissingFiles(log || `${this.stdoutBuf}\n${this.stderrBuf}`);
       if (missing.length === 0) break;
       const fetched = await this.fetchMissingIntoTds(missing);
       if (fetched === 0) break;
       retriesUsed++;
     }
 
-    return {
+    const result: RunResult = {
       exitCode,
       stdout,
       stderr,
@@ -504,7 +622,24 @@ class WorkerImpl implements WorkerApi {
       log,
       durationMs: performance.now() - startedAt,
       lazyFetchRetries: retriesUsed,
+      lazyTds: this.lazyMounted,
     };
+    // Hand the output buffers over instead of structured-cloning them: the
+    // PDF (and any generated image) is otherwise copied once more on its way
+    // out of the worker. Only whole-buffer views are transferable — detaching
+    // a buffer we only partly own would take the rest of it with us.
+    const transferables = new Set<ArrayBuffer>();
+    for (const bytes of outputs.values()) {
+      const buffer = bytes.buffer;
+      if (
+        buffer instanceof ArrayBuffer &&
+        bytes.byteOffset === 0 &&
+        bytes.byteLength === buffer.byteLength
+      ) {
+        transferables.add(buffer);
+      }
+    }
+    return Comlink.transfer(result, [...transferables]);
   }
 
   /** -fmt/-cnf-line are web2c TeX-engine conventions; the other engines reject them. */
@@ -514,6 +649,15 @@ class WorkerImpl implements WorkerApi {
     const fmt = FMT_PATH[this.engineId];
     if (fmt && pathExists(FS, fmt)) {
       args.push(`-fmt=${fmt}`);
+    } else if (!selectsOwnFormat(opts.args)) {
+      // Without a format the engine falls back to mktexfmt, which needs
+      // fork(2) — ENOSYS in wasm. That surfaces as an unreadable crash deep
+      // in kpathsea, so say what is actually missing instead.
+      throw new Error(
+        `texlive-wasm: no LaTeX format for ${this.engineId} — ${fmt} is not in the TeX tree. ` +
+          `Install the engine's core bundle ('npx texlive-wasm download-assets') and point ` +
+          `config.bundleUrl or config.manifestUrl at it, or pass your own -fmt=/-ini argument.`,
+      );
     }
     args.push(
       '-cnf-line=TEXMFCNF=/texmf-dist/web2c',
@@ -560,7 +704,12 @@ class WorkerImpl implements WorkerApi {
     for (const name of missing) {
       // Exact manifest paths first; heuristic location guessing as fallback.
       const indexed = name.includes('/') ? [] : (this.nameIndex.get(name) ?? []);
-      const candidates = [...indexed, ...expandMissingName(name)];
+      // These names were parsed out of an engine log — i.e. out of whatever
+      // the document asked TeX to \input. Nothing downstream of here may see
+      // a path that leaves /texmf-dist.
+      const candidates = [...indexed, ...expandMissingName(name)]
+        .map((c) => safeRelativePath(c))
+        .filter((c): c is string => c !== null);
       for (const candidate of candidates) {
         let bytes: Uint8Array | null = null;
         for (const backend of this.backends) {
@@ -576,13 +725,44 @@ class WorkerImpl implements WorkerApi {
           }
         }
         if (bytes) {
-          this.tdsFiles.set(stripLeadingSlash(candidate), bytes);
+          this.tdsFiles.set(candidate, bytes);
           written++;
           break;
         }
       }
     }
     return written;
+  }
+
+  /**
+   * Locate the diagnostic file this engine writes. TeX engines write
+   * `<jobname>.log`; the helpers each have their own (bibtexu/biber `.blg`,
+   * makeindex `.ilg`) and none of them accepts a `-jobname`, so their names
+   * derive from the file they were pointed at. Without this, the on-miss
+   * lazy fetch below is a no-op for every helper — it never even finds a log
+   * to read. xdvipdfmx writes no log at all; its diagnostics are on stderr.
+   */
+  private findLog(FS: EmscriptenFS, args: string[]): string {
+    if (!this.engineId) return '';
+    const ext = LOG_EXT[this.engineId];
+    if (!ext) return ''; // xdvipdfmx: diagnostics go to stderr, not a file
+    const stem = this.jobStem(args);
+    if (!stem) return '';
+    // The tool writes its log into the cwd under the job stem, regardless of
+    // where the input file lived.
+    return readTextFile(FS, `/project/${stem}${ext}`);
+  }
+
+  /** Job stem: honors -jobname, else the basename of the tool's input file. */
+  private jobStem(args: string[]): string | undefined {
+    const jobArg = args.find((a) => /^--?jobname=/.test(a));
+    if (jobArg) return jobArg.split('=')[1];
+    const inputRe = INPUT_ARG_RE[this.engineId ?? 'pdflatex'] ?? /\.(tex|ltx)$/i;
+    const candidates = args.filter((a) => !a.startsWith('-'));
+    // biber is handed a bare jobname ("main"), not a file, so fall back to
+    // the last positional argument when nothing matches the input pattern.
+    const match = candidates.find((a) => inputRe.test(a)) ?? candidates[candidates.length - 1];
+    return match?.replace(inputRe, '').split('/').pop();
   }
 
   async dispose(): Promise<void> {
@@ -632,10 +812,6 @@ function reconstructBackend(
   if (meta.hasInit) backend.init = () => host.init(index);
   if (meta.hasDispose) backend.dispose = () => host.dispose(index);
   return backend;
-}
-
-function stripLeadingSlash(p: string): string {
-  return p.replace(/^\/+/, '');
 }
 
 function dirname(p: string): string {
@@ -718,18 +894,72 @@ function collectFiles(
 }
 
 /**
+ * Like collectFiles, but skips files that are byte-for-byte the input we
+ * wrote — echoing a project's images and fonts back across the worker
+ * boundary on every pass is the single biggest avoidable copy in a compile.
+ * The size check keeps the common case (a big unchanged asset) from being
+ * read out of the FS at all.
+ */
+function collectProduced(
+  FS: EmscriptenFS,
+  absDir: string,
+  relPrefix: string,
+  inputs: Map<string, Uint8Array>,
+  out: Map<string, Uint8Array>,
+): void {
+  for (const name of FS.readdir(absDir)) {
+    if (name === '.' || name === '..') continue;
+    const abs = `${absDir}/${name}`;
+    const rel = relPrefix ? `${relPrefix}/${name}` : name;
+    const st = FS.stat(abs);
+    if (isDirMode(st.mode)) {
+      collectProduced(FS, abs, rel, inputs, out);
+      continue;
+    }
+    const input = inputs.get(rel);
+    if (input && input.length === st.size) {
+      const current = FS.readFile(abs);
+      if (sameBytes(input, current)) continue;
+      out.set(rel, current);
+      continue;
+    }
+    out.set(rel, FS.readFile(abs));
+  }
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/**
  * Pull "I can't find file `x.sty'" / "Font ... not found" / "! LaTeX
  * Error: File `x.sty' not found" lines out of the .log and return the
  * referenced filenames.
+ *
+ * The helper tools each complain in their own dialect — bibtexu wants a
+ * .bst, makeindex an .ist, xdvipdfmx a CMap or a font map — and they write
+ * those complaints into their own log (.blg/.ilg, see WorkerImpl.findLog),
+ * so their patterns live here too.
  */
 function parseMissingFiles(log: string): string[] {
   if (!log) return [];
   const out = new Set<string>();
   const patterns = [
+    // TeX engines.
     /I can't find file `([^']+)'/g,
     /File `([^']+)' not found/g,
     /file `([^']+)' is not loadable/g,
     /Cannot find ([\w.-]+\.(?:sty|cls|fd|def|cfg|tfm|vf|pfb|otf|ttf|mf|enc|map))/gi,
+    // bibtex/bibtexu (.blg): "I couldn't open style file plainnat.bst".
+    /I couldn't open (?:style|database|auxiliary) file ([\w./-]+)/g,
+    // makeindex (.ilg): "Index style file custom.ist not found".
+    /[Ii]ndex style file ([\w./-]+) not found/g,
+    /Couldn't (?:open|find) (?:style|input) file ([\w./-]+)/g,
+    // xdvipdfmx / dvipdfmx (stderr): missing CMaps, font maps, encodings.
+    /Could not open (?:file|font|CMap)[:\s]+"?([\w./-]+)"?/g,
+    /Unable to find (?:file|font)[:\s]+"?([\w./-]+)"?/g,
   ];
   for (const re of patterns) {
     let m;
@@ -766,36 +996,38 @@ function expandMissingName(name: string): string[] {
     out.push(`fonts/type1/public/${stem.replace(/\d.*$/, '')}/${stem}`);
   } else if (ext === 'map' || ext === 'enc') {
     out.push(`fonts/${ext}/dvips/${stem.replace(/\.\w+$/, '')}/${stem}`);
+  } else if (ext === 'bst') {
+    // bibtexu's styles: TDS puts them under bibtex/bst/<package>/.
+    out.push(`bibtex/bst/${stem.replace(/\.\w+$/, '')}/${stem}`);
+    out.push(`bibtex/bst/base/${stem}`);
+  } else if (ext === 'bib') {
+    out.push(`bibtex/bib/${stem.replace(/\.\w+$/, '')}/${stem}`);
+  } else if (ext === 'ist' || ext === 'mst') {
+    out.push(`makeindex/${stem.replace(/\.\w+$/, '')}/${stem}`);
+    out.push(`makeindex/base/${stem}`);
+  } else if (ext === '' || ext === 'cmap') {
+    // xdvipdfmx CMaps have no extension ("UniJIS-UCS2-H").
+    out.push(`fonts/cmap/${stem}`);
   }
   return out;
 }
 
-/**
- * Locate the TeX .log for this run. Honors -jobname; otherwise derives the
- * jobname from the first .tex/.ltx argument (basename — TeX writes the log
- * into the cwd regardless of the input file's directory).
- */
-function findLog(FS: EmscriptenFS, args: string[]): string {
-  let stem: string | undefined;
-  const jobArg = args.find((a) => /^--?jobname=/.test(a));
-  if (jobArg) {
-    stem = jobArg.split('=')[1];
-  } else {
-    const texArg = args.find((a) => /\.(tex|ltx)$/i.test(a));
-    stem = texArg
-      ?.replace(/\.(tex|ltx)$/i, '')
-      .split('/')
-      .pop();
-  }
-  if (!stem) return '';
-  const logPath = `/project/${stem}.log`;
-  if (!pathExists(FS, logPath)) return '';
+function readTextFile(FS: EmscriptenFS, path: string): string {
+  if (!pathExists(FS, path)) return '';
   try {
-    return new TextDecoder('utf-8', { fatal: false }).decode(FS.readFile(logPath));
+    return new TextDecoder('utf-8', { fatal: false }).decode(FS.readFile(path));
   } catch {
     return '';
   }
 }
 
 const api = new WorkerImpl();
-Comlink.expose(api);
+// Only bind Comlink when we really are the worker. Importing this module from
+// anywhere else (a test that drives the FS orchestration against a fake
+// Emscripten module, an SSR pass) must not attach handlers to a foreign
+// global — a Worker global has postMessage, Node does not.
+if (typeof (globalThis as { postMessage?: unknown }).postMessage === 'function') {
+  Comlink.expose(api);
+}
+
+export { WorkerImpl };

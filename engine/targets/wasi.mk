@@ -43,7 +43,7 @@ WASI_LDFLAGS := \
 	-mllvm -wasm-enable-sjlj \
 	-Wl,--initial-memory=67108864
 
-# Only pdflatex is wired for WASI initially. Others are stubs.
+# Only pdflatex is wired for WASI. The others are not built for this target.
 WASI_CONFIGURABLE := pdflatex
 
 define ENGINE_TEMPLATE_wasi
@@ -52,9 +52,7 @@ $(1)-wasi: $$(BUILD_DIR)/$(1)/wasi/$(1).wasm
 
 $$(BUILD_DIR)/$(1)/wasi/$(1).wasm: $$(NATIVE_DONE) | source
 	@if ! echo "$$(WASI_CONFIGURABLE)" | grep -qw "$(1)"; then \
-	  echo "==> [wasi] $(1) — not yet wired (only $$(WASI_CONFIGURABLE) supported); emitting stub"; \
-	  mkdir -p $$(BUILD_DIR)/$(1)/wasi; \
-	  touch $$@; \
+	  echo "==> [wasi] $(1) — not wired for WASI (only $$(WASI_CONFIGURABLE) is); nothing built"; \
 	  exit 0; \
 	fi; \
 	echo "==> [wasi] $(1) — building libstubs.a"; \

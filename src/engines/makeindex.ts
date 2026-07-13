@@ -1,7 +1,7 @@
-import { BaseEngineWrapper } from './base';
+import { BaseEngineWrapper, limitsOf, type RunLimits } from './base';
 import type { EngineId, FileInput, RunResult } from '../core/types';
 
-export interface MakeindexOptions {
+export interface MakeindexOptions extends RunLimits {
   /** .idx file path. */
   idxFile: string;
   files?: FileInput[];
@@ -22,6 +22,6 @@ export class Makeindex extends BaseEngineWrapper {
       ...(options.extraArgs ?? []),
       options.idxFile,
     ];
-    return this.runRaw(args, options.files ?? []);
+    return this.runRaw(args, options.files ?? [], limitsOf(options));
   }
 }

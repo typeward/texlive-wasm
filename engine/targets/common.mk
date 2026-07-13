@@ -20,6 +20,16 @@ THREAD_CFLAGS  :=
 THREAD_LDFLAGS :=
 endif
 
+# Ceiling for wasm heap growth. 2 GiB is all a 32-bit wasm memory can address,
+# so it is the right default on desktop — but a mobile WebView is killed by the
+# OS long before it, and a lower ceiling makes the engine fail with a clean
+# out-of-memory abort instead of taking the whole app down. Override per build:
+#   make pdflatex-emscripten MAX_MEMORY=1GB        (emcc accepts size suffixes)
+# Exported so the biber recipe's link (scripts/biber/spike-build.sh, which is a
+# shell script rather than a make link line) honours the same knob.
+MAX_MEMORY ?= 2147483648
+export MAX_MEMORY
+
 # Reproducible builds.
 export SOURCE_DATE_EPOCH ?= 1700000000
 

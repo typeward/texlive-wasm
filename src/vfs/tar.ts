@@ -14,8 +14,32 @@ export interface TarEntry {
   type: 'file' | 'dir' | 'other';
 }
 
-/** Parse a tar archive into a list of entries. */
-export function untar(bytes: Uint8Array): TarEntry[] {
+export interface UntarOptions {
+  /**
+   * Ceiling on the number of entries. The full TeX tree is ~180k files, so
+   * anything past this is not a TDS — it is an archive built to make us
+   * allocate. Default: MAX_TAR_ENTRIES.
+   */
+  maxEntries?: number;
+}
+
+/**
+ * Ceiling on the entry count of a single archive. The full TL 2026 tree is
+ * roughly 180k files; the bundles we publish are far smaller.
+ */
+export const MAX_TAR_ENTRIES = 250_000;
+
+/**
+ * Parse a tar archive into a list of entries.
+ *
+ * A malformed or hostile archive is an error, not a shorter list: a header
+ * whose declared size runs past the end of the buffer, or an entry count no
+ * TDS could have, means the bytes are not the archive we asked for. Entry
+ * NAMES are not judged here — the caller owns the root they unpack into and
+ * confines them with safeRelativePath (see vfs/bundlefs.ts).
+ */
+export function untar(bytes: Uint8Array, options: UntarOptions = {}): TarEntry[] {
+  const maxEntries = options.maxEntries ?? MAX_TAR_ENTRIES;
   const out: TarEntry[] = [];
   const decoder = new TextDecoder();
   let offset = 0;
@@ -37,9 +61,23 @@ export function untar(bytes: Uint8Array): TarEntry[] {
     pendingLongName = null;
 
     offset += 512;
+    // A size that overruns the buffer means the header is lying (or the
+    // download was truncated); subarray() would silently hand back a short
+    // read, and the engine would compile with half a file.
+    if (size < 0 || !Number.isSafeInteger(size) || offset + size > bytes.length) {
+      throw new Error(
+        `texlive-wasm: tar entry "${fullPath}" declares ${size} bytes, past the end of the archive`,
+      );
+    }
     const contentBlocks = Math.ceil(size / 512);
     const content = bytes.subarray(offset, offset + size);
     offset += contentBlocks * 512;
+
+    if (out.length >= maxEntries) {
+      throw new Error(
+        `texlive-wasm: tar archive has more than ${maxEntries} entries; refusing to continue`,
+      );
+    }
 
     if (typeflag === 'L') {
       // GNU long-name extension: next entry's name is this content (NUL-terminated).
@@ -109,15 +147,27 @@ function isAllZero(block: Uint8Array): boolean {
 }
 
 /**
+ * Ceiling on what a single archive may expand to. The full TeX tree is the
+ * largest thing we legitimately unpack (~275 MB), so anything past this is a
+ * compression bomb or a wrong URL — and on a mobile WebView, unpacking it
+ * would take the app down before any JS error surfaced.
+ */
+export const MAX_DECOMPRESSED_BYTES = 512 * 1024 * 1024;
+
+/**
  * Decompress a gzip- or brotli-wrapped buffer using native DecompressionStream.
  *
  * `format` may be 'gzip' or 'deflate-raw' or 'br'. Brotli support varies by
  * runtime (Chrome 121+, Firefox 127+, Node 22+); gzip works everywhere since
  * 2023. Caller picks based on what their target supports.
+ *
+ * The output is bounded as it streams — checking the size after the fact
+ * would mean the bomb has already been allocated.
  */
 export async function decompress(
   bytes: Uint8Array,
   format: 'gzip' | 'deflate-raw' | 'br',
+  maxBytes: number = MAX_DECOMPRESSED_BYTES,
 ): Promise<Uint8Array> {
   const Ctor = (globalThis as { DecompressionStream?: typeof DecompressionStream })
     .DecompressionStream;
@@ -130,7 +180,29 @@ export async function decompress(
   // `br` is a valid CompressionFormat at runtime in Chrome 121+/FF 127+/Node 22+
   // but TS's lib.dom.d.ts only declares 'gzip' | 'deflate' | 'deflate-raw'.
   // We cast — at runtime DecompressionStream throws TypeError if unsupported.
-  const stream = new Blob([ab]).stream().pipeThrough(new Ctor(format as CompressionFormat));
+  const stream = new Blob([ab])
+    .stream()
+    .pipeThrough(new Ctor(format as CompressionFormat))
+    .pipeThrough(limitBytes(maxBytes, format));
   const buf = await new Response(stream).arrayBuffer();
   return new Uint8Array(buf);
+}
+
+/** Errors the stream as soon as it has produced more than `maxBytes`. */
+function limitBytes(maxBytes: number, format: string): TransformStream<Uint8Array, Uint8Array> {
+  let seen = 0;
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      seen += chunk.byteLength;
+      if (seen > maxBytes) {
+        controller.error(
+          new Error(
+            `texlive-wasm: ${format} stream expands past the ${maxBytes}-byte limit; refusing to continue`,
+          ),
+        );
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  });
 }

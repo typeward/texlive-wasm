@@ -15,9 +15,9 @@ on:
         required: false
         default: 'pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex'
       targets:
-        description: 'Space-separated targets (default: emscripten wasi)'
+        description: 'Space-separated targets. WASI is experimental and only wired for pdflatex.'
         required: false
-        default: 'emscripten wasi'
+        default: 'emscripten'
   push:
     tags:
       - 'engines-v*'
@@ -39,7 +39,10 @@ jobs:
         env:
           # On tag pushes the inputs context is empty — fall back to everything.
           ENGINES: ${{ inputs.engines || 'pdflatex xelatex lualatex bibtexu xdvipdfmx makeindex' }}
-          TARGETS: ${{ inputs.targets || 'emscripten wasi' }}
+          # Only emscripten by default: WASI is wired for pdflatex alone
+          # (engine/targets/wasi.mk WASI_CONFIGURABLE), and asking for a leg
+          # that builds nothing is a red job, not a useful signal.
+          TARGETS: ${{ inputs.targets || 'emscripten' }}
         run: |
           {
             echo "engines=$(printf '%s\n' $ENGINES | jq -Rcn '[inputs]')"
@@ -49,13 +52,13 @@ jobs:
   builder-image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       # Exposes ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL to run steps so
       # `docker buildx --cache-from/--cache-to=type=gha` can authenticate.
-      - uses: crazy-max/ghaction-github-runtime@v4
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4
 
       - name: build the toolchain image (cached)
         run: |
@@ -75,13 +78,13 @@ jobs:
         engine: ${{ fromJSON(needs.plan.outputs.engines) }}
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      - uses: crazy-max/ghaction-github-runtime@v4
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4
 
       - name: rebuild toolchain image from cache
         run: |
@@ -100,22 +103,47 @@ jobs:
             texlive-wasm-builder:ci \
             make -j$(nproc) ENABLE_THREADS=0 ${{ matrix.engine }}-${{ matrix.target }}
 
+      # The build dir also holds the intermediate Work/ tree and link.log; stage
+      # the shipped files on their own so both the validator and the artifact
+      # see exactly what a consumer would get.
+      - name: stage ${{ matrix.engine }}-${{ matrix.target }}
+        run: |
+          src="engine/build/${{ matrix.engine }}/${{ matrix.target }}"
+          out="staged/${{ matrix.engine }}/${{ matrix.target }}"
+          mkdir -p "$out"
+          # A target an engine is not wired for builds nothing at all (rather
+          # than a zero-byte placeholder), so say which combination was asked
+          # for instead of failing on an unmatched cp glob.
+          if ! ls "$src"/*.wasm >/dev/null 2>&1; then
+            echo "::error::${{ matrix.engine }} is not wired for the ${{ matrix.target }} target; nothing was built"
+            exit 1
+          fi
+          cp "$src"/*.wasm "$out"/
+          cp "$src"/*.js "$out"/ 2>/dev/null || true
+          ls -la "$out"
+
+      # Same gate as release.yml: wasm magic + section framing, a non-empty
+      # export section, a size floor and the lazy-FS entry points the worker
+      # mounts /texmf-dist through. The staged path keeps the target segment, so
+      # the validator knows the wasi leg ships no JS glue and must not be asked
+      # for one.
+      - name: validate ${{ matrix.engine }}-${{ matrix.target }}
+        run: node scripts/validate-artifacts.mjs staged --engine ${{ matrix.engine }}
+
       - name: upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.engine }}-${{ matrix.target }}
-          path: |
-            engine/build/${{ matrix.engine }}/${{ matrix.target }}/*.wasm
-            engine/build/${{ matrix.engine }}/${{ matrix.target }}/*.js
+          path: staged/${{ matrix.engine }}/${{ matrix.target }}/
           retention-days: 7
 
   manifest:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 20
           cache: npm
@@ -123,7 +151,7 @@ jobs:
       - run: npm ci
 
       - name: download engine artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: engine-artifacts/
 
@@ -134,7 +162,7 @@ jobs:
             > dist/tex-packages.json
           ls -la dist/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: manifest
           path: dist/tex-packages.json

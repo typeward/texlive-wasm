@@ -2,16 +2,23 @@
  * Engine lifecycle manager: lazy, memoized handles with an LRU cap.
  *
  * Every engine worker holds its own copy of the TDS in memory (the map it
- * drains at init plus the MEMFS materialization during runs), so keeping
- * all six engines alive is expensive — on mobile WebViews it is fatal.
- * The manager keeps at most `maxLiveEngines` workers alive, evicting the
- * least-recently-used idle one before creating the next. Engines pinned by
- * an in-flight `withEngines()` scope are never evicted; when everything is
- * pinned the cap is temporarily exceeded rather than deadlocking.
+ * drains at init plus the materialization during runs), so keeping all seven
+ * engines alive is expensive — on mobile WebViews it is fatal. The manager
+ * keeps at most `maxLiveEngines` workers alive, evicting the least-recently-
+ * used idle one before creating the next, and awaiting its disposal so the
+ * old and new engine never hold their trees at the same time.
+ *
+ * "Idle" means nothing is using the engine: handles are pinned for the
+ * duration of every run() and for the whole of a `withEngines()` scope, so a
+ * compile can never have its engine — or a helper it is about to need —
+ * evicted underneath it. When everything is pinned the cap is exceeded rather
+ * than deadlocking: a latexmk pipeline legitimately needs tex + bibtex +
+ * makeindex + xdvipdfmx alive together, and blocking it to satisfy a memory
+ * cap would hang the compile instead of slowing it.
  */
 
 import { createEngine } from './engine';
-import type { EngineConfig, EngineHandle, EngineId } from './types';
+import type { EngineConfig, EngineHandle, EngineId, RunOptions, RunResult } from './types';
 
 export interface EngineManagerOptions {
   /** Builds the EngineConfig for an engine the first time it is needed. */
@@ -29,7 +36,11 @@ export interface EngineManagerOptions {
 }
 
 export interface EngineManager {
-  /** Lazy, memoized handle; marks the engine most-recently-used. */
+  /**
+   * Lazy, memoized handle; marks the engine most-recently-used. The handle is
+   * leased: it pins its engine for the duration of each run(), and its
+   * dispose() goes through the manager so the slot cannot outlive the worker.
+   */
   engine(id: EngineId): Promise<EngineHandle>;
   /**
    * Acquire several engines and pin them for the duration of `fn` — a
@@ -47,10 +58,18 @@ export interface EngineManager {
 }
 
 interface Slot {
+  /** The raw handle from createEngine. */
   promise: Promise<EngineHandle>;
+  /** The leased view handed to callers — stable per slot. */
+  leased: Promise<EngineHandle>;
+  /** The resolved handle, once it exists — isReady() has to answer synchronously. */
+  current: EngineHandle | null;
   pins: number;
   lastUsed: number;
 }
+
+/** A slot that never loaded is handled by `forget`; this just keeps it unhandled-free. */
+function noop(): void {}
 
 export function createEngineManager(options: EngineManagerOptions): EngineManager {
   const maxLive = Math.max(1, options.maxLiveEngines ?? 3);
@@ -63,20 +82,40 @@ export function createEngineManager(options: EngineManagerOptions): EngineManage
       existing.lastUsed = ++clock;
       return existing;
     }
-    evictIdle();
+    // Synchronous slot creation is load-bearing: withEngines() pins its slots
+    // before it awaits anything, so a concurrent compile cannot evict a
+    // handle that is still being constructed.
+    const evicted = evictIdle();
     options.onLoad?.(id);
-    const promise = createEngine(id, options.config(id));
-    const slot: Slot = { promise, pins: 0, lastUsed: ++clock };
+    const promise = evicted.then(() => createEngine(id, options.config(id)));
+    const slot: Slot = {
+      promise,
+      leased: promise.then((handle) => lease(id, handle)),
+      current: null,
+      pins: 0,
+      lastUsed: ++clock,
+    };
     slots.set(id, slot);
+    promise.then((handle) => {
+      slot.current = handle;
+    }, noop);
     // A failed init must not poison the slot forever.
-    promise.catch(() => {
+    const forget = () => {
       if (slots.get(id) === slot) slots.delete(id);
-    });
+    };
+    promise.catch(forget);
+    slot.leased.catch(forget);
     return slot;
   }
 
-  function evictIdle(): void {
-    if (slots.size < maxLive) return;
+  /**
+   * Free a slot for the engine about to be created. The returned promise
+   * settles only once the victim's worker is actually gone — starting the new
+   * engine before that would put both trees in memory at once, which is the
+   * peak the cap exists to prevent.
+   */
+  function evictIdle(): Promise<void> {
+    if (slots.size < maxLive) return Promise.resolve();
     let victim: EngineId | null = null;
     let oldest = Infinity;
     for (const [id, slot] of slots) {
@@ -85,15 +124,55 @@ export function createEngineManager(options: EngineManagerOptions): EngineManage
         victim = id;
       }
     }
-    if (!victim) return; // everything is pinned — allow the extra engine
+    if (!victim) return Promise.resolve(); // everything is pinned — allow the extra engine
     const slot = slots.get(victim)!;
     slots.delete(victim);
     options.onEvict?.(victim);
-    void slot.promise.then((h) => h.dispose()).catch(() => {});
+    return slot.promise.then(
+      (h) => h.dispose(),
+      () => {}, // a slot that never loaded has nothing to dispose
+    );
   }
 
-  return {
-    engine: (id) => get(id).promise,
+  /**
+   * Wrap a handle so that using it keeps it alive. Without this an engine
+   * obtained from engine() is unpinned while it runs, so a concurrent compile
+   * can evict it mid-run — and terminating a worker mid-callMain is exactly
+   * the case that leaves the caller's run() promise unsettled.
+   *
+   * The lease is on the engine ID, not on one worker: it re-acquires the slot
+   * on every run and pins it BEFORE awaiting anything. So a handle whose worker
+   * was evicted between two compiles transparently gets a fresh one, instead of
+   * throwing "has been disposed" at a caller who did nothing wrong.
+   */
+  function lease(id: EngineId, handle: EngineHandle): EngineHandle {
+    return {
+      id: handle.id,
+      config: handle.config,
+      async run(runOptions: RunOptions): Promise<RunResult> {
+        const slot = get(id);
+        slot.pins++;
+        try {
+          const live = await slot.promise;
+          return await live.run(runOptions);
+        } finally {
+          slot.pins--;
+        }
+      },
+      // Disposing the worker behind the manager's back would leave the slot
+      // handing out a dead handle.
+      dispose: () => manager.dispose(id),
+      // Answer for the engine the next run() would use, not for the worker
+      // this lease was minted around: that one may have been evicted since,
+      // and run() would transparently reload it. Reporting the dead worker
+      // would have a leased handle claim "not ready" forever after an
+      // eviction it is designed to survive.
+      isReady: () => slots.get(id)?.current?.isReady() ?? false,
+    };
+  }
+
+  const manager: EngineManager = {
+    engine: (id) => get(id).leased,
 
     async withEngines(ids, fn) {
       // Pin before awaiting anything so a concurrent compile can't evict a
@@ -106,7 +185,7 @@ export function createEngineManager(options: EngineManagerOptions): EngineManage
       try {
         const handles = new Map<EngineId, EngineHandle>();
         for (let i = 0; i < ids.length; i++) {
-          handles.set(ids[i]!, await pinned[i]!.promise);
+          handles.set(ids[i]!, await pinned[i]!.leased);
         }
         return await fn(handles);
       } finally {
@@ -128,4 +207,6 @@ export function createEngineManager(options: EngineManagerOptions): EngineManage
       );
     },
   };
+
+  return manager;
 }

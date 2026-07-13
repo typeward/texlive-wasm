@@ -1,7 +1,7 @@
-import { BaseEngineWrapper } from './base';
+import { BaseEngineWrapper, limitsOf, type RunLimits } from './base';
 import type { EngineId, FileInput, RunResult } from '../core/types';
 
-export interface BiberOptions {
+export interface BiberOptions extends RunLimits {
   /** Jobname — the `.bcf` basename, with or without the extension. */
   jobname: string;
   /** Project files; must include `<jobname>.bcf` and the `.bib` sources. */
@@ -31,6 +31,6 @@ export class Biber extends BaseEngineWrapper {
   async run(options: BiberOptions): Promise<RunResult> {
     const jobname = options.jobname.replace(/\.bcf$/i, '');
     const args = ['/biber/bin/biber', '--noconf', ...(options.extraArgs ?? []), jobname];
-    return this.runRaw(args, options.files ?? []);
+    return this.runRaw(args, options.files ?? [], limitsOf(options));
   }
 }

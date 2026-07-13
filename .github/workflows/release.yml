@@ -1,13 +1,25 @@
 name: release
 
-# Tag-driven release: builds every engine via the docker toolchain, packs
-# the artifacts into per-engine tar.gz files (scripts/pack-release.mjs),
-# attaches them to the GitHub Release for the pushed tag, and then
-# publishes the wrapper package to npm via trusted publishing (OIDC).
+# Tag-driven release: builds every engine via the docker toolchain, assembles
+# the TeX tree and dumps the formats with those very engines, compiles a real
+# document through every engine we advertise (scripts/smoke-all.mjs), packs the
+# artifacts into per-engine tar.gz files plus the TDS bundles
+# (scripts/pack-release.mjs), attaches them to the GitHub Release for the pushed
+# tag, and then publishes the wrapper package to npm via trusted publishing
+# (OIDC).
+#
+# A release carries everything a fresh consumer install needs to compile
+# offline: engines (.wasm/.js), ICU data, biber's Perl runtime VFS, the TeX tree
+# (texmf.tar.gz full tier + texmf-core-<engine>.tar.gz mobile tier) and, inside
+# those bundles, the .fmt formats dumped by the engines being published.
 #
 # Trigger:
 #   git tag v0.1.0 && git push --tags
 # Or manually from the Actions tab; pick an existing tag.
+#
+# Third-party actions are pinned by commit SHA (the tag on the comment is the
+# release the SHA belongs to). A tag can be re-pointed at new code; a commit
+# cannot.
 
 on:
   push:
@@ -38,17 +50,17 @@ jobs:
         engine: [pdflatex, xelatex, lualatex, bibtexu, xdvipdfmx, makeindex, biber]
         target: [emscripten]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           # On manual dispatch, build the tag's code — not the default branch.
           ref: ${{ github.event.inputs.tag || github.ref }}
           submodules: recursive
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       # Exposes ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL to run steps so
       # `docker buildx --cache-from/--cache-to=type=gha` can authenticate.
-      - uses: crazy-max/ghaction-github-runtime@v4
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4
 
       - name: build toolchain image (cached)
         run: |
@@ -90,24 +102,43 @@ jobs:
           fi
           ls -la staged/
 
+      # Nothing leaves this job unchecked: wasm magic, section framing and a
+      # non-empty export section, a size floor, gzip magic on the side-cars, and
+      # the lazy-FS entry points the worker mounts /texmf-dist through. A leg
+      # whose build silently produced nothing fails here instead of packing a
+      # placeholder into the release.
+      - name: validate ${{ matrix.engine }} artifact
+        run: node scripts/validate-artifacts.mjs staged --engine ${{ matrix.engine }}
+
       - name: upload engine artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.engine }}-${{ matrix.target }}
           path: staged/
           retention-days: 7
 
-  pack-and-release:
+  # The release gate, and the producer of the TeX tree the release ships. A real
+  # \documentclass{article} document has to compile through every engine and
+  # helper we advertise, using the artifacts this run just built. Grepping the
+  # glue for `shared:true` (in `build`) proves the engines are single-threaded;
+  # only this job proves they still typeset.
+  #
+  # The TDS bundles are packed here, right after the smoke that exercised them,
+  # and handed to `pack-and-release` as an artifact: the tree assembly is the
+  # expensive part of a release, and doing it a second time in the packing job
+  # would both double it and let the release publish a tree that nothing
+  # compiled against.
+  smoke:
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - uses: actions/setup-node@v6
+      # Node 20 (the package's floor). smoke-all.mjs skips its WASI leg below
+      # Node 22 — correct here: the release ships emscripten artifacts only.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 20
           cache: npm
@@ -115,26 +146,126 @@ jobs:
       - run: npm ci
 
       - name: download all engine artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
+          # Engine legs only — this job produces `tds-bundles` itself, and a
+          # bare download would drag any other artifact into the staging tree.
+          pattern: '*-emscripten'
           path: engine-artifacts-staging/
 
       - name: stage engine-artifacts/ tree
+        run: bash .github/scripts/stage-engine-artifacts.sh
+
+      - name: validate engine artifacts
+        run: node scripts/validate-artifacts.mjs engine-artifacts
+
+      - name: fetch TDS
+        # Deliberately uncached, unlike deploy-site: fetch-tds.sh is a no-op
+        # whenever engine-artifacts/texmf is non-empty, so a partially restored
+        # cache would silently publish a truncated TeX tree.
+        run: bash scripts/fetch-tds.sh
+
+      # biblatex validates the .bbl format version and biber validates the .bcf
+      # version — a mismatched pair refuses to run. Fail before the smoke so the
+      # failure names the real cause.
+      - name: check biber/biblatex version lockstep
+        run: node scripts/check-biber-lockstep.mjs
+
+      # .fmt files are binary-coupled to the exact engine build — regenerate
+      # them with the engines under test, not with Ubuntu's.
+      - name: rebuild formats with the wasm engines
         run: |
-          mkdir -p engine-artifacts
-          for dir in engine-artifacts-staging/*/; do
-            name=$(basename "$dir")            # e.g. pdflatex-emscripten
-            engine=${name%-*}
-            target=${name##*-}
-            mkdir -p "engine-artifacts/$engine/$target"
-            cp -r "$dir"/* "engine-artifacts/$engine/$target/"
+          node scripts/build-fmt.mjs
+          node scripts/build-xelatex-fmt.mjs
+          node scripts/build-lualatex-fmt.mjs
+
+      - name: compile smoke — every engine
+        run: node scripts/smoke-all.mjs
+
+      # texmf.tar.gz is the full tier; texmf-core-<engine>.tar.gz is the subset a
+      # mobile app preloads (only engines with a scripts/data/core-tier.<engine>.list
+      # have one). Both names are the contract the library's bundleUrl and the
+      # Tauri example's HEAD probe rely on. The formats ride inside the bundles
+      # (web2c/*/*.fmt) — no separate format asset to keep in sync.
+      - name: pack TDS bundles
+        run: |
+          node scripts/pack-tds.mjs
+          for engine in pdflatex xelatex lualatex; do
+            node scripts/pack-tds.mjs --tier core --engine "$engine"
           done
-          # pack-release.mjs expects the ICU data at the tree root.
-          icu=$(find engine-artifacts -name icudt78l.dat | head -1)
-          if [ -n "$icu" ] && [ "$icu" != "engine-artifacts/icudt78l.dat" ]; then
-            mv "$icu" engine-artifacts/icudt78l.dat
-          fi
-          ls -R engine-artifacts/ | head -40
+          ls -la engine-artifacts/*.tar.gz
+
+      - name: upload TDS bundles
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tds-bundles
+          # Top-level bundles only; .tar.br is never published (WebKit has no
+          # DecompressionStream('br')).
+          path: engine-artifacts/*.tar.gz
+          # Already gzip — re-deflating hundreds of MB buys nothing.
+          compression-level: 0
+          retention-days: 7
+
+  pack-and-release:
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # The engines are derived works of TeX Live, so its license travels inside
+      # every binary archive and pack-release.mjs refuses to pack without it.
+      # Neither texlive-source nor the Ubuntu texlive packages fetch-tds.sh
+      # unpacks carry LICENSE.TL — it lives at the root of a TeX Live
+      # installation — so it has to come from the checkout. Resolved up front so
+      # a missing license costs seconds, not a whole packing run.
+      - name: resolve TeX Live LICENSE.TL
+        run: |
+          for candidate in \
+            LICENSE.TL \
+            vendor/texlive-source/LICENSE.TL \
+            engine-artifacts/LICENSE.TL \
+            engine-artifacts/texmf/LICENSE.TL; do
+            if [ -s "$candidate" ]; then
+              echo "LICENSE.TL: $candidate ($(wc -c < "$candidate") bytes)"
+              exit 0
+            fi
+          done
+          echo "::error::no TeX Live LICENSE.TL in the checkout — copy it from a TeX Live installation root into ./LICENSE.TL and re-tag. Engine archives are not publishable without it (--skip-license is for local packs only)."
+          exit 1
+
+      - name: download all engine artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          # Engine legs only: the TDS bundles are downloaded separately, straight
+          # into engine-artifacts/ where pack-release.mjs looks for them.
+          pattern: '*-emscripten'
+          path: engine-artifacts-staging/
+
+      - name: stage engine-artifacts/ tree
+        run: bash .github/scripts/stage-engine-artifacts.sh
+
+      - name: download TDS bundles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: tds-bundles
+          path: engine-artifacts/
+
+      # Last gate before anything is published: re-runs the structural checks on
+      # the assembled tree, which also catches an artifact that arrived truncated
+      # and a bundle that is not a gzip stream.
+      - name: validate release inputs
+        run: node scripts/validate-artifacts.mjs engine-artifacts
 
       - name: pack release tarballs
         run: |
@@ -143,7 +274,10 @@ jobs:
           cat release/checksums.json
 
       - name: upload to GitHub Release
-        uses: softprops/action-gh-release@v3
+        # release/*.tar.gz covers the per-engine engine archives *and* the TDS
+        # bundles pack-release copied through; checksums.json carries a size +
+        # sha256 for every one of them.
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
@@ -171,11 +305,11 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 20
           cache: npm

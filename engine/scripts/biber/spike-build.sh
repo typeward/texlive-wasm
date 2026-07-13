@@ -21,11 +21,51 @@ BUILD="$ROOT/build/biber"
 SCRIPTS="$ROOT/scripts/biber"
 NPROC=$(nproc)
 
+# Heap ceiling for the browser link, mirroring targets/common.mk's MAX_MEMORY
+# (exported by make, so `make biber-emscripten MAX_MEMORY=1GB` reaches here).
+MAX_MEMORY="${MAX_MEMORY:-2147483648}"
+
 PERL_VERSION=5.42.0
 PERL_SHA256=e093ef184d7f9a1b9797e2465296f55510adb6dab8842b0c3ed53329663096dc
 PERL_URLS=(
   "https://www.cpan.org/src/5.0/perl-$PERL_VERSION.tar.gz"
   "https://cpan.metacpan.org/src/5.0/perl-$PERL_VERSION.tar.gz"
+)
+
+# cpanminus is a build dependency like any other: the bootstrap used to pipe
+# whatever bytes cpanmin.us served straight into perl. The dist ships the same
+# fatpacked bin/cpanm, so pin and verify it instead of executing a live URL.
+CPANM_VERSION=1.7049
+CPANM_SHA256=b9ffb88e62a06aa91bd7d5a28ef6bdbb942608aea90e3969aa29b33640035214
+CPANM_URLS=(
+  "https://cpan.metacpan.org/authors/id/M/MI/MIYAGAWA/App-cpanminus-$CPANM_VERSION.tar.gz"
+  "https://www.cpan.org/authors/id/M/MI/MIYAGAWA/App-cpanminus-$CPANM_VERSION.tar.gz"
+)
+CPANM="$BUILD/native/bin/cpanm"
+
+# The dists cpanm resolves are pinned too: cpan-lock.txt is the full closure
+# (65 dists, sha256 from each author's PAUSE-signed CHECKSUMS, in dependency
+# order), fetched into a local mirror and installed from there. Regenerate it
+# with `spike-build.sh cpan-lock` after changing CPAN_MODULES.
+CPAN_LOCK="$SCRIPTS/cpan-lock.txt"
+CPAN_MIRROR="$BUILD/cpan-mirror"
+
+# Biber's pure-perl runtime deps (its Build.PL requirements minus: XS, which
+# is handled as static exts; network/LWP; tool-mode XSLT; build-time
+# Module::Build) plus the SAX pair the XML stack needs. These names are INPUT
+# TO THE LOCK GENERATOR ONLY — a build installs cpan-lock.txt, never a live
+# resolution of this list.
+# NOTE: never list a dist here whose dep tree includes XML::LibXML — cpanm
+# would try to build it natively; the wasm perl has it statically.
+# (XML::LibXML::Simple is staged file-wise in the biber stage instead.)
+CPAN_MODULES=(
+  XML::SAX XML::NamespaceSupport
+  Business::ISBN Business::ISMN Business::ISSN Class::Accessor
+  Data::Compare Data::Dump Data::Uniqid DateTime::Format::Builder
+  DateTime::Calendar::Julian File::Slurper IO::String IPC::Run3
+  List::AllUtils Lingua::Translit Log::Log4perl MIME::Charset
+  Parse::RecDescent Regexp::Common Text::CSV Text::Roman URI
+  XML::Writer
 )
 
 # Step-2 XS payload. CPAN pins verified byte-identical across cpan.org and
@@ -126,27 +166,96 @@ stage_native() {
   echo "==> [native] done: $("$out/miniperl" -e 'print $]')"
 }
 
+# The installer: bin/cpanm out of the sha256-pinned App-cpanminus tarball IS
+# the fatpacked script cpanmin.us serves, so it needs no installation of its
+# own — copy it out and always run it through the native perl.
+fetch_cpanm() {
+  [ -x "$CPANM" ] && return 0
+  local ct="$BUILD/App-cpanminus-$CPANM_VERSION.tar.gz"
+  [ -f "$ct" ] || bash "$ROOT/scripts/fetch-verify.sh" "$ct" "$CPANM_SHA256" "${CPANM_URLS[@]}"
+  local ctmp
+  ctmp=$(mktemp -d)
+  tar -xzf "$ct" -C "$ctmp" --strip-components=1
+  mkdir -p "$(dirname "$CPANM")"
+  cp "$ctmp/bin/cpanm" "$CPANM"
+  chmod +x "$CPANM"
+  rm -rf "$ctmp"
+  echo "==> [cpanm] App-cpanminus $CPANM_VERSION (sha256-pinned)"
+}
+
+# Materialise cpan-lock.txt into a local CPAN mirror. Same gate as every other
+# source tarball: fetch-verify.sh refuses anything whose sha256 does not match.
+fetch_cpan_mirror() {
+  local sha path out
+  while read -r sha path; do
+    case "$sha" in '' | \#*) continue ;; esac
+    out="$CPAN_MIRROR/authors/id/$path"
+    [ -f "$out" ] && continue
+    mkdir -p "$(dirname "$out")"
+    bash "$ROOT/scripts/fetch-verify.sh" "$out" "$sha" \
+      "https://cpan.metacpan.org/authors/id/$path" \
+      "https://www.cpan.org/authors/id/$path"
+  done < "$CPAN_LOCK"
+}
+
 # Pure-perl runtime deps, staged with the NATIVE perl's cpanm into a lib
 # tree the wasm perl reads via -I (pure perl is architecture-independent).
-# Spike-scope: unpinned cpanm installs; the production M4 build will pin.
+#
+# Two resolvers:
+#  - LOCKED (BIBER_CPAN_LOCK=1): install cpan-lock.txt's closure of
+#    sha256-verified tarballs, in dependency order, from a local mirror with
+#    --mirror-only. That mirror carries no package index, so a dist the lock
+#    forgot cannot be silently pulled off CPAN: the build fails instead.
+#  - LIVE (default): let cpanm resolve CPAN_MODULES against CPAN, which is
+#    what has always built biber. The lock's *hashes* are verified but its
+#    completeness and ordering have never been executed end to end, and a
+#    wrong closure fails the build ~35 minutes in. Flip the default once a
+#    container run has proven the locked path green.
+#
+# Either way cpanminus itself is sha256-pinned — no more piping a live URL
+# into perl.
 stage_purelib() {
   local native="$BUILD/native"
   local purelib="$BUILD/purelib"
   local nperl="$native/prefix/bin/perl"
   [ -x "$nperl" ] || { echo "run stage native first" >&2; exit 1; }
-  if [ ! -x "$native/prefix/bin/cpanm" ]; then
-    echo "==> [purelib] installing cpanminus into the native perl"
-    curl -fsSL https://cpanmin.us | "$nperl" - --notest App::cpanminus >/dev/null
-  fi
-  # NOTE: never list dists here whose dep tree includes XML::LibXML — cpanm
-  # would try to build it natively; the wasm perl has it statically.
-  # (XML::LibXML::Simple is staged file-wise in the biber stage instead.)
+  fetch_cpanm
   # --pp: dual-life dists must build PURE (native XS .pm files land in the
   # host arch dir the wasm perl never searches).
-  "$native/prefix/bin/cpanm" -L "$purelib" --notest --pp \
-    XML::SAX XML::NamespaceSupport 2>&1 | tail -3
+  if [ "${BIBER_CPAN_LOCK:-0}" = "1" ]; then
+    [ -f "$CPAN_LOCK" ] || { echo "missing $CPAN_LOCK — run stage cpan-lock" >&2; exit 1; }
+    fetch_cpan_mirror
+    local tarballs=() sha path
+    while read -r sha path; do
+      case "$sha" in '' | \#*) continue ;; esac
+      tarballs+=("$CPAN_MIRROR/authors/id/$path")
+    done < "$CPAN_LOCK"
+    "$nperl" "$CPANM" -L "$purelib" --notest --pp \
+      --mirror "file://$CPAN_MIRROR" --mirror-only \
+      "${tarballs[@]}" 2>&1 | tail -3
+    echo "==> [purelib] ${#tarballs[@]} locked dists (sha256-verified)"
+  else
+    "$nperl" "$CPANM" -L "$purelib" --notest --pp "${CPAN_MODULES[@]}" 2>&1 | tail -3
+    echo "==> [purelib] ${#CPAN_MODULES[@]} modules resolved against live CPAN (set BIBER_CPAN_LOCK=1 to install the pinned closure)"
+  fi
   merge_archdir_pms
   echo "==> [purelib] $(find "$purelib/lib/perl5" -name '*.pm' | wc -l) modules staged"
+}
+
+# Maintainer-only: re-resolve CPAN_MODULES against live CPAN and rewrite
+# cpan-lock.txt from what cpanm actually installed. This is the ONE place
+# unpinned CPAN metadata enters the build — run it deliberately, diff the
+# lock, commit it. Never part of `all` or of the Makefile's biber chain.
+stage_cpan_lock() {
+  local native="$BUILD/native"
+  local nperl="$native/prefix/bin/perl"
+  local resolve="$BUILD/cpan-resolve"
+  [ -x "$nperl" ] || { echo "run stage native first" >&2; exit 1; }
+  fetch_cpanm
+  rm -rf "$resolve"
+  echo "==> [cpan-lock] resolving ${#CPAN_MODULES[@]} modules against live CPAN"
+  "$nperl" "$CPANM" -L "$resolve" --notest --pp "${CPAN_MODULES[@]}" 2>&1 | tail -3
+  node "$SCRIPTS/gen-cpan-lock.mjs" "$resolve" "$CPAN_LOCK"
 }
 
 # Safety net for dists that ignore PUREPERL_ONLY: their pure .pm files
@@ -327,11 +436,11 @@ stage_xs_fetch() {
   echo "==> [xs] tarballs fetched; run stage cross to build them in"
 }
 
-# Stage the biber dist + its pure-perl dependency tree.
+# Stage the biber dist itself. Its pure-perl dependency tree is already in
+# place: stage purelib installs the whole locked closure (cpan-lock.txt).
 stage_biber() {
-  local native="$BUILD/native"
   local purelib="$BUILD/purelib"
-  [ -x "$native/prefix/bin/cpanm" ] || { echo "run stage purelib first" >&2; exit 1; }
+  [ -d "$purelib/lib/perl5" ] || { echo "run stage purelib first" >&2; exit 1; }
 
   local bt="$BUILD/biblatex-biber-$BIBER_VERSION.tar.gz"
   [ -f "$bt" ] || bash "$ROOT/scripts/fetch-verify.sh" "$bt" "$BIBER_SHA256" "${BIBER_URLS[@]}"
@@ -349,18 +458,7 @@ stage_biber() {
   cp "$tmp/lib/XML/LibXML/Simple.pm" "$purelib/lib/perl5/XML/LibXML/"
   rm -rf "$tmp"
 
-  # Biber's pure-perl runtime deps (Build.PL requires minus: XS handled as
-  # static exts, network/LWP, tool-mode XSLT, build-time Module::Build).
-  # --pp keeps dual-life dists (DateTime!) out of the host arch dir.
-  "$native/prefix/bin/cpanm" -L "$purelib" --notest --pp \
-    Business::ISBN Business::ISMN Business::ISSN Class::Accessor \
-    Data::Compare Data::Dump Data::Uniqid DateTime::Format::Builder \
-    DateTime::Calendar::Julian File::Slurper IO::String IPC::Run3 \
-    List::AllUtils Lingua::Translit Log::Log4perl MIME::Charset \
-    Parse::RecDescent Regexp::Common Text::CSV Text::Roman URI \
-    XML::Writer 2>&1 | tail -3
-  merge_archdir_pms
-  echo "==> [biber] dist + purelib staged"
+  echo "==> [biber] dist staged (deps: $(find "$purelib/lib/perl5" -name '*.pm' | wc -l) modules from the lock)"
 }
 
 stage_biber_smoke() {
@@ -435,7 +533,7 @@ stage_dist() {
     -sALLOW_MEMORY_GROWTH=1 \
     -sMEMORY_GROWTH_GEOMETRIC_STEP=0.5 \
     -sINITIAL_MEMORY=67108864 \
-    -sMAXIMUM_MEMORY=2147483648 \
+    -sMAXIMUM_MEMORY=$MAX_MEMORY \
     -sSTACK_SIZE=8388608 \
     -sMODULARIZE=1 \
     -sEXPORT_ES6=1 \
@@ -529,6 +627,7 @@ stage_smoke() {
 case "$STAGE" in
   native)      stage_native ;;
   purelib)     stage_purelib ;;
+  cpan-lock)   stage_cpan_lock ;;
   cross)       stage_cross ;;
   smoke)       stage_smoke ;;
   libxml2)     stage_libxml2 ;;
@@ -540,5 +639,5 @@ case "$STAGE" in
   dist)        stage_dist ;;
   dist-smoke)  stage_dist_smoke ;;
   all)         stage_native && stage_cross && stage_smoke ;;
-  *) echo "unknown stage: $STAGE (native|purelib|cross|smoke|libxml2|xs-fetch|xs-smoke|biber|biber-smoke|all)" >&2; exit 1 ;;
+  *) echo "unknown stage: $STAGE (native|purelib|cpan-lock|cross|smoke|libxml2|xs-fetch|xs-smoke|biber|biber-smoke|all)" >&2; exit 1 ;;
 esac

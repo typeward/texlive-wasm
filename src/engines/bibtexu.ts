@@ -1,7 +1,7 @@
-import { BaseEngineWrapper } from './base';
+import { BaseEngineWrapper, limitsOf, type RunLimits } from './base';
 import type { EngineId, FileInput, RunResult } from '../core/types';
 
-export interface BibtexuOptions {
+export interface BibtexuOptions extends RunLimits {
   /** Aux file path (without the .aux extension is fine). */
   auxFile: string;
   files?: FileInput[];
@@ -18,6 +18,6 @@ export class Bibtexu extends BaseEngineWrapper {
 
   async run(options: BibtexuOptions): Promise<RunResult> {
     const args: string[] = [...(options.extraArgs ?? []), options.auxFile];
-    return this.runRaw(args, options.files ?? []);
+    return this.runRaw(args, options.files ?? [], limitsOf(options));
   }
 }

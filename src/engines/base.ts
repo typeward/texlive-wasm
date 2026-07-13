@@ -23,6 +23,34 @@ export interface EngineWrapperOptions extends Omit<EngineConfig, 'useWorker'> {
   useWorker?: boolean;
 }
 
+/**
+ * Wall-clock ceiling for one engine invocation when the caller names none.
+ * A runaway `\def\x{\x}\x` otherwise spins the worker forever, and on a
+ * phone that is a dead app rather than a failed compile. Generous enough for
+ * a large document on slow mobile hardware; pass `timeoutMs: 0` to opt out.
+ */
+export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
+
+/** Per-invocation limits every typed wrapper accepts. */
+export interface RunLimits {
+  /**
+   * Wall-clock ceiling in ms. Default: DEFAULT_RUN_TIMEOUT_MS. `0` disables
+   * it. Enforcing it terminates the worker, so the handle (and any wrapper
+   * that borrowed it) is unusable afterwards.
+   */
+  timeoutMs?: number;
+  /** Cancels the run — same worker-terminating semantics as `timeoutMs`. */
+  signal?: AbortSignal;
+}
+
+/** Pick just the limits out of a wrapper's option bag (exactOptionalPropertyTypes). */
+export function limitsOf(options: RunLimits): RunLimits {
+  return {
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
+  };
+}
+
 export abstract class BaseEngineWrapper {
   protected abstract readonly engineId: EngineId;
   protected handle: EngineHandle | null = null;
@@ -51,7 +79,7 @@ export abstract class BaseEngineWrapper {
   protected async runRaw(
     args: string[],
     files: FileInput[],
-    extra: { cwd?: string; timeoutMs?: number; env?: Record<string, string> } = {},
+    extra: RunLimits & { cwd?: string; env?: Record<string, string> } = {},
   ): Promise<RunResult> {
     const handle = await this.ensureHandle();
     const opts: RunOptions = {
@@ -59,7 +87,11 @@ export abstract class BaseEngineWrapper {
       files,
       cwd: extra.cwd ?? '/project',
     };
-    if (extra.timeoutMs !== undefined) opts.timeoutMs = extra.timeoutMs;
+    // 0 means "no ceiling"; undefined means "the caller did not think about
+    // it", which is exactly when a default belongs.
+    const timeoutMs = extra.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    if (timeoutMs > 0) opts.timeoutMs = timeoutMs;
+    if (extra.signal !== undefined) opts.signal = extra.signal;
     if (extra.env !== undefined) opts.env = extra.env;
     return handle.run(opts);
   }

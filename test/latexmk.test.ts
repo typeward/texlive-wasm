@@ -261,7 +261,8 @@ describe('latexmk multi-pass orchestration', () => {
       files: [
         {
           path: 'main.tex',
-          content: '\\usepackage[style=authoryear]{biblatex}\\addbibresource{r.bib}\\printbibliography',
+          content:
+            '\\usepackage[style=authoryear]{biblatex}\\addbibresource{r.bib}\\printbibliography',
         },
       ],
       handles: { tex, biber },
@@ -313,6 +314,31 @@ describe('latexmk multi-pass orchestration', () => {
     expect(result.success).toBe(true);
     expect(new TextDecoder().decode(result.pdf!)).toBe('FINAL PDF');
     expect(xdvipdfmx.calls).toHaveLength(1);
+  });
+
+  it('fails the compile when makeindex fails, instead of shipping a stale index', async () => {
+    const tex = fakeHandle('pdflatex', ({ n }) => ({
+      outputs: {
+        'main.aux': 'A',
+        'main.log': 'clean',
+        'main.idx': 'IDX',
+        // A PDF exists — it just has the wrong (missing) index in it.
+        'main.pdf': `P${n}`,
+      },
+    }));
+    // makeindex exits non-zero on a real error (bad style file, unreadable .idx).
+    const makeindex = fakeHandle('makeindex', () => ({ exitCode: 1 }));
+
+    const result = await latexmk({
+      engine: 'pdflatex',
+      mainTex: 'main.tex',
+      files: [{ path: 'main.tex', content: '\\makeindex\\printindex' }],
+      handles: { tex, makeindex },
+    });
+
+    expect(makeindex.calls).toHaveLength(1);
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(1);
   });
 
   it('runs makeindex when the .idx appears and feeds the .ind back in', async () => {

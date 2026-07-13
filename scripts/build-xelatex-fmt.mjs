@@ -3,7 +3,7 @@
  * build-xelatex-fmt.mjs — build xelatex.fmt using our wasm xetex.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -11,7 +11,9 @@ const TEXMF = join(REPO_ROOT, 'engine-artifacts/texmf');
 const XELATEX_JS = join(REPO_ROOT, 'engine-artifacts/xelatex/emscripten/xelatex.js');
 const ICU_DATA = join(REPO_ROOT, 'engine-artifacts/icudt78l.dat');
 
-const m = await import(XELATEX_JS);
+// import() takes a URL, not a path: a bare absolute path works on POSIX but
+// the ESM loader rejects "C:\..." as an unknown scheme.
+const m = await import(pathToFileURL(XELATEX_JS).href);
 
 function walk(FS, absDir, mfsDir) {
   if (!FS.analyzePath(mfsDir).exists) FS.mkdir(mfsDir);
@@ -70,11 +72,20 @@ try {
 }
 console.error(`[build-xelatex-fmt] exit=${exitCode} in ${Date.now() - t0}ms`);
 
-if (!Module.FS.analyzePath('/work/xelatex.fmt').exists) {
-  console.error('[build-xelatex-fmt] FAILED');
-  if (Module.FS.analyzePath('/work/xelatex.log').exists) {
-    console.error(new TextDecoder().decode(Module.FS.readFile('/work/xelatex.log')).slice(-2000));
-  }
+// The .fmt existing is not proof of a good build: -interaction=nonstopmode
+// carries on past errors and still dumps a format made from a half-loaded
+// latex.ltx, which then fails at compile time on a user's machine. Gate on the
+// engine's exit status and on the log the engine actually wrote.
+const log = readLog(Module, '/work/xelatex.log');
+const problems = [];
+if (exitCode !== 0) problems.push(`engine exited with ${exitCode}`);
+problems.push(...fatalMarkers(log));
+if (!Module.FS.analyzePath('/work/xelatex.fmt').exists) problems.push('no fmt produced');
+
+if (problems.length > 0) {
+  console.error('[build-xelatex-fmt] FAILED:');
+  for (const p of problems) console.error(`  - ${p}`);
+  if (log) console.error(log.slice(-2000));
   process.exit(1);
 }
 
@@ -83,3 +94,19 @@ const outPath = join(TEXMF, 'web2c/xetex/xelatex.fmt');
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, fmt);
 console.error(`[build-xelatex-fmt] wrote ${outPath} (${fmt.length} bytes)`);
+
+function readLog(mod, path) {
+  if (!mod.FS.analyzePath(path).exists) return '';
+  return new TextDecoder().decode(mod.FS.readFile(path));
+}
+
+/** TeX's own fatal vocabulary — an error line, a stop, an abort. */
+function fatalMarkers(text) {
+  if (!text) return [];
+  const found = [];
+  const error = text.match(/^! .*$/m);
+  if (error) found.push(`TeX error in the log: ${error[0].trim()}`);
+  if (text.includes('Emergency stop')) found.push('Emergency stop in the log');
+  if (text.includes('Fatal error occurred')) found.push('fatal error in the log');
+  return found;
+}

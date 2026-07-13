@@ -1,7 +1,7 @@
-import { BaseEngineWrapper } from './base';
+import { BaseEngineWrapper, limitsOf, type RunLimits } from './base';
 import type { EngineId, FileInput, RunResult } from '../core/types';
 
-export interface LuaLatexCompileOptions {
+export interface LuaLatexCompileOptions extends RunLimits {
   mainTex: string;
   files?: FileInput[];
   interaction?: 'nonstopmode' | 'batchmode' | 'errorstopmode' | 'scrollmode';
@@ -23,6 +23,6 @@ export class LuaLatex extends BaseEngineWrapper {
       ...(options.extraArgs ?? []),
       options.mainTex,
     ];
-    return this.runRaw(args, options.files ?? []);
+    return this.runRaw(args, options.files ?? [], limitsOf(options));
   }
 }

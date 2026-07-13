@@ -7,12 +7,19 @@
  *     Default dest:    ./public/texlive-wasm
  *     Default version: v<package.json version> (or $TEXLIVE_WASM_VERSION)
  *     Default assets:  all .tar.gz + icudt78l.dat.gz listed in the release's
- *                      checksums.json.
+ *                      checksums.json (the full TDS bundle is large — pass
+ *                      --assets to narrow it down).
  *
  *   npx texlive-wasm download-assets --tag v0.1.0 ./static/wasm
- *   npx texlive-wasm download-assets --assets pdflatex-emscripten,xelatex-emscripten,icudt78l.dat.gz
+ *   npx texlive-wasm download-assets --assets pdflatex-emscripten,texmf-core-pdflatex,icudt78l.dat.gz
  *     (asset names match checksums.json keys; the .tar.gz/.gz suffix may be omitted)
  *   npx texlive-wasm version
+ *
+ * Engine archives are unpacked to <dest>/<engine>/<target>/ and the download
+ * is discarded. TDS bundles (texmf.tar.gz, texmf-core-<engine>.tar.gz) are
+ * BOTH unpacked to <dest>/texmf/ and kept as archives: the library's
+ * `bundleUrl` — and examples/tauri's HEAD probe for
+ * <dest>/texmf-core-<engine>.tar.gz — fetch the archive itself over HTTP.
  */
 
 'use strict';
@@ -28,6 +35,9 @@ const { createGunzip } = require('node:zlib');
 const REPO_OWNER = process.env.TEXLIVE_WASM_REPO_OWNER || 'typeward';
 const REPO_NAME = process.env.TEXLIVE_WASM_REPO_NAME || 'texlive-wasm';
 
+// Published TDS bundle names (scripts/pack-tds.mjs → scripts/pack-release.mjs).
+const TDS_BUNDLE = /^texmf(-core-[A-Za-z0-9]+)?\.tar\.(gz|br)$/;
+
 const args = process.argv.slice(2);
 const command = args[0];
 
@@ -40,7 +50,17 @@ function usage() {
       'Defaults:\n' +
       '  dest    ./public/texlive-wasm\n' +
       '  tag     v<package.json version>  (or env TEXLIVE_WASM_VERSION)\n' +
-      '  assets  every .tar.gz + .dat.gz published with the release\n',
+      '  assets  every .tar.gz + .dat.gz published with the release\n' +
+      '\n' +
+      'The wrapper version, the release tag and the version inside the release\'s\n' +
+      'checksums.json must agree; download-assets refuses to mix them. Override\n' +
+      'with --allow-version-mismatch (it downgrades the error to a warning).\n' +
+      '\n' +
+      'Assets:\n' +
+      '  <engine>-emscripten   engine glue + wasm, unpacked to <dest>/<engine>/emscripten/\n' +
+      '  texmf-core-<engine>   per-engine core TDS bundle: kept as .tar.gz AND unpacked\n' +
+      '  texmf                 full TDS bundle (large): kept as .tar.gz AND unpacked\n' +
+      '  icudt78l.dat.gz       ICU data, needed by xelatex and bibtexu\n',
   );
 }
 
@@ -55,6 +75,7 @@ function parseFlags(argv) {
     else if (a === '--repo') flags.repo = argv[++i];
     else if (a === '--force' || a === '-f') flags.force = true;
     else if (a === '--no-verify') flags.noVerify = true;
+    else if (a === '--allow-version-mismatch') flags.allowVersionMismatch = true;
     else if (a === '--help' || a === '-h') flags.help = true;
     else positional.push(a);
   }
@@ -85,6 +106,7 @@ function parseFlags(argv) {
       repo: flags.repo || REPO_NAME,
       force: !!flags.force,
       verify: !flags.noVerify,
+      allowVersionMismatch: !!flags.allowVersionMismatch,
     });
     return;
   }
@@ -105,6 +127,7 @@ async function downloadAssets(opts) {
   log(`download-assets: source ${opts.owner}/${opts.repo} ${tag}`);
 
   const checksums = await fetchChecksums(opts.owner, opts.repo, tag);
+  assertVersionsAgree(tag, checksums.version, opts.allowVersionMismatch);
   const available = Object.keys(checksums.assets ?? {});
   // Accept both "pdflatex-emscripten" and "pdflatex-emscripten.tar.gz":
   // checksums.json keys carry the archive suffix.
@@ -152,7 +175,21 @@ async function downloadAssets(opts) {
         );
       }
     }
-    if (name.endsWith('.tar.gz')) {
+    if (TDS_BUNDLE.test(name)) {
+      // A TDS bundle serves two consumers at once: the worker fetches the
+      // archive by URL (bundleUrl / the Tauri core-bundle probe), while
+      // TauriFS and the manifest backends read the unpacked tree. Keep both —
+      // extracting and deleting the archive would break the first.
+      fs.writeFileSync(path.join(dest, name), buf);
+      if (name.endsWith('.tar.gz')) {
+        await extractTarGz(buf, dest);
+        log(`  kept ${name} and unpacked it into texmf/`);
+      } else {
+        // .tar.br — no DecompressionStream('br') in WebKit, so we never
+        // publish these; if one shows up, keep the bytes and leave it alone.
+        log(`  kept ${name}`);
+      }
+    } else if (name.endsWith('.tar.gz')) {
       await extractTarGz(buf, dest);
       log(`  unpacked ${name}`);
     } else if (name.endsWith('.gz')) {
@@ -173,8 +210,42 @@ async function downloadAssets(opts) {
 
 function resolveTag() {
   if (process.env.TEXLIVE_WASM_VERSION) return process.env.TEXLIVE_WASM_VERSION;
-  const pkg = require(path.join(__dirname, '..', 'package.json'));
-  return `v${pkg.version}`;
+  return `v${wrapperVersion()}`;
+}
+
+function wrapperVersion() {
+  return require(path.join(__dirname, '..', 'package.json')).version;
+}
+
+/**
+ * The version contract: wrapper npm version == release tag == the `version`
+ * inside that release's checksums.json. Engine assets are only guaranteed to
+ * work with the wrapper they were built beside, and the failure mode of a
+ * mismatch is not a clean error — it is an engine that loads a format file
+ * from another TL build and dies inside kpathsea. So say so here, loudly,
+ * where the two versions first meet.
+ */
+function assertVersionsAgree(tag, assetVersion, allow) {
+  const wrapper = wrapperVersion();
+  const bare = (v) => String(v).replace(/^v/, '');
+  const problems = [];
+  if (bare(tag) !== wrapper) {
+    problems.push(`wrapper is ${wrapper} (expects tag v${wrapper}) but the tag is ${tag}`);
+  }
+  if (assetVersion && bare(assetVersion) !== wrapper) {
+    problems.push(`checksums.json says version ${assetVersion}`);
+  }
+  if (!assetVersion) {
+    problems.push(`checksums.json for ${tag} carries no version field`);
+  }
+  if (problems.length === 0) return;
+  const message =
+    `version mismatch: ${problems.join('; ')}.\n` +
+    `  The wrapper, the release tag and the asset manifest must be the same version.\n` +
+    `  Install the matching wrapper (npm i texlive-wasm@${tag.replace(/^v/, '')}), pass --tag v${wrapper},\n` +
+    `  or pass --allow-version-mismatch if you really are mixing them on purpose.`;
+  if (!allow) throw new Error(message);
+  log(`WARNING: ${message}`);
 }
 
 async function fetchChecksums(owner, repo, tag) {

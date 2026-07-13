@@ -1,7 +1,7 @@
-import { BaseEngineWrapper } from './base';
+import { BaseEngineWrapper, limitsOf, type RunLimits } from './base';
 import type { EngineId, FileInput, RunResult } from '../core/types';
 
-export interface PdfLatexCompileOptions {
+export interface PdfLatexCompileOptions extends RunLimits {
   /** Main .tex file path (relative to /project). */
   mainTex: string;
   /** Files to drop into /project before the engine runs. */
@@ -28,6 +28,6 @@ export class PdfLatex extends BaseEngineWrapper {
       ...(options.extraArgs ?? []),
       options.mainTex,
     ];
-    return this.runRaw(args, options.files ?? []);
+    return this.runRaw(args, options.files ?? [], limitsOf(options));
   }
 }

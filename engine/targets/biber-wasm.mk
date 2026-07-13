@@ -4,13 +4,17 @@
 # heavily annotated — every stage documents the trap it works around). This
 # target just chains the stages for CI and local builds:
 #
-#   native    host perl (miniperl + full install, cpanm)
-#   purelib   pure-perl runtime deps via cpanm --pp
+#   native    host perl (miniperl + full install)
+#   purelib   the locked pure-perl closure (scripts/biber/cpan-lock.txt) via
+#             a pinned cpanm, installed from a sha256-verified local mirror
 #   libxml2   wasm static libxml2 for XML::LibXML
 #   xs-fetch  pinned XS dist tarballs
 #   cross     Perl + 7 static XS exts → libperl.a + perl (glue)
-#   biber     biber dist + remaining pure deps
+#   biber     biber dist (+ XML::LibXML::Simple)
 #   dist      installperl → prune → biber-vfs.tar.gz + MODULARIZE link
+#
+# `spike-build.sh cpan-lock` regenerates the lock against live CPAN. It is
+# deliberately NOT part of this chain: builds must be lock-driven.
 #
 # Output: build/biber/emscripten/{biber.js,biber.wasm,biber-vfs.tar.gz}
 #

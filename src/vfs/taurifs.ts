@@ -19,6 +19,7 @@
  */
 
 import type { EngineHandle, VfsBackend } from '../core/types';
+import { safeRelativePath } from '../core/paths';
 
 export interface TauriFsOptions {
   /** Subdirectory under the chosen base dir where the TDS lives. e.g. "texmf". */
@@ -47,13 +48,22 @@ export async function createTauriFs(opts: TauriFsOptions): Promise<VfsBackend> {
     );
   }
 
-  const join = (a: string, b: string) =>
-    a.endsWith('/') ? a + b.replace(/^\//, '') : a + '/' + b.replace(/^\//, '');
+  // Unlike the other backends, a path that escapes here escapes into the
+  // user's real filesystem: plugin-fs resolves it against a base dir with the
+  // app's own permissions. Every TDS path arriving from an engine log goes
+  // through the same funnel as everywhere else.
+  const resolve = (tdsPath: string): string | null => {
+    const rel = safeRelativePath(tdsPath);
+    if (!rel) return null;
+    const root = opts.texmfRoot.replace(/\/+$/, '');
+    return root ? `${root}/${rel}` : rel;
+  };
 
   return {
     id: 'taurifs',
     async read(tdsPath: string): Promise<Uint8Array | null> {
-      const full = join(opts.texmfRoot, tdsPath);
+      const full = resolve(tdsPath);
+      if (!full) return null;
       try {
         return await (fs as typeof import('@tauri-apps/plugin-fs')).readFile(full, {
           baseDir: opts.baseDir,
@@ -63,7 +73,8 @@ export async function createTauriFs(opts: TauriFsOptions): Promise<VfsBackend> {
       }
     },
     async exists(tdsPath: string): Promise<boolean> {
-      const full = join(opts.texmfRoot, tdsPath);
+      const full = resolve(tdsPath);
+      if (!full) return false;
       try {
         return await (fs as typeof import('@tauri-apps/plugin-fs')).exists(full, {
           baseDir: opts.baseDir,

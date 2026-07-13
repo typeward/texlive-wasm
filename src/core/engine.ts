@@ -28,10 +28,16 @@ const DISPOSE_GRACE_MS = 2000;
 
 export async function createEngine(id: EngineId, config: EngineConfig = {}): Promise<EngineHandle> {
   const merged: EngineConfig = { ...DEFAULT_CONFIG, ...config };
-  const backends: VfsBackend[] = merged.vfs ?? (await defaultBackends(id, merged));
+  // With a worker, the manifest's core bundle is unpacked inside it (see
+  // WorkerInitOptions.bundleFromManifest) — building it out here would keep a
+  // second copy of the whole TeX tree on the main thread and then trickle it
+  // across the RPC boundary file by file.
+  const bundleInWorker = merged.useWorker === true && !merged.vfs && !!merged.manifestUrl;
+  const backends: VfsBackend[] =
+    merged.vfs ?? (await defaultBackends(id, merged, { skipManifestBundle: bundleInWorker }));
 
   if (merged.useWorker) {
-    return createWorkerEngine(id, merged, backends);
+    return createWorkerEngine(id, merged, backends, bundleInWorker);
   }
   return createInProcessEngine(id, merged, backends);
 }
@@ -71,6 +77,7 @@ async function createWorkerEngine(
   id: EngineId,
   config: EngineConfig,
   backends: VfsBackend[],
+  bundleFromManifest = false,
 ): Promise<EngineHandle> {
   // Vite requires Worker options to be statically analyzable; keep the object literal inline.
   const worker = new Worker(new URL('./worker.ts', import.meta.url), {
@@ -100,7 +107,12 @@ async function createWorkerEngine(
   try {
     await Promise.race([
       api.init(
-        { engineId: id, config: cloneableConfig, backendMeta },
+        {
+          engineId: id,
+          config: cloneableConfig,
+          backendMeta,
+          ...(bundleFromManifest ? { bundleFromManifest: true } : {}),
+        },
         Comlink.proxy(makeBackendHost(backends)),
       ),
       workerFailed,
@@ -116,27 +128,44 @@ async function createWorkerEngine(
   // each other's /project state.
   let queue: Promise<unknown> = Promise.resolve();
 
+  // Killing the worker leaves the in-flight Comlink call unsettled forever —
+  // its reply can never arrive. Every path that terminates the worker settles
+  // this instead, so a caller awaiting run() gets an error rather than a hang.
+  let killRun: (err: Error) => void = () => {};
+  const killed = new Promise<never>((_, reject) => {
+    killRun = reject;
+  });
+  killed.catch(() => {}); // nobody races it while the worker is healthy
+
+  const terminate = (reason: string): void => {
+    ready = false;
+    worker.terminate();
+    killRun(new Error(`Engine ${id}: ${reason}`));
+  };
+
   const doRun = async (options: RunOptions): Promise<RunResult> => {
     if (!ready) throw new Error(`Engine ${id} has been disposed`);
-    if (options.timeoutMs === undefined) {
-      return api.run(options);
-    }
+    // An AbortSignal is not structured-cloneable — it stays on this side.
+    const { signal, ...runOptions } = options;
+    if (signal?.aborted) throw new Error(`Engine ${id}: run aborted before it started`);
+
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        // callMain is synchronous inside the worker — the only way to stop
-        // it is to kill the worker. The handle is unusable afterwards.
-        ready = false;
-        worker.terminate();
-        reject(
-          new Error(`Engine ${id} run exceeded timeoutMs=${options.timeoutMs}; worker terminated`),
-        );
-      }, options.timeoutMs);
-    });
+    // callMain is synchronous inside the worker, so neither a timeout nor an
+    // abort can interrupt it — the only way to stop the engine is to kill the
+    // worker, which makes the handle unusable afterwards.
+    const onAbort = () => terminate('run aborted; worker terminated');
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (options.timeoutMs !== undefined) {
+      timer = setTimeout(
+        () => terminate(`run exceeded timeoutMs=${options.timeoutMs}; worker terminated`),
+        options.timeoutMs,
+      );
+    }
     try {
-      return await Promise.race([api.run(options), timedOut]);
+      return await Promise.race([api.run(runOptions), killed]);
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
     }
   };
 
@@ -160,6 +189,7 @@ async function createWorkerEngine(
         ]);
       } finally {
         worker.terminate();
+        killRun(new Error(`Engine ${id} was disposed while a run was in flight`));
       }
     },
     isReady(): boolean {
@@ -169,13 +199,18 @@ async function createWorkerEngine(
 }
 
 async function createInProcessEngine(
-  _id: EngineId,
+  id: EngineId,
   _config: EngineConfig,
   _backends: VfsBackend[],
 ): Promise<EngineHandle> {
-  // TODO(phase 3): direct in-process implementation for Node/WASI.
-  // The worker path is the primary one; this is a thin shim that imports the
-  // same engine-loading code without spawning a worker. Useful for tests and
-  // for the wasi-sdk Node target.
-  throw new Error('In-process engine not yet implemented; pass useWorker: true for now.');
+  // TODO(phase 3): direct in-process implementation for Node/WASI. The worker
+  // path is the primary one; this would be a thin shim that imports the same
+  // engine-loading code without spawning a worker.
+  //
+  // Node has no global Worker either, so "pass useWorker: true" is not a
+  // workaround — there is no way to run an engine under plain Node today.
+  throw new Error(
+    `texlive-wasm: running ${id} outside a Web Worker (Node / WASI) is not implemented yet. ` +
+      `The engines currently require a browser, Tauri WebView, or another Worker-capable host.`,
+  );
 }

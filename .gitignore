@@ -69,3 +69,6 @@ example/*/public/core/
 
 # Claude Code local state
 .claude/scheduled_tasks.lock
+
+reviews/
+plans/

@@ -23,7 +23,16 @@
  * XeLatex, LuaLatex) handle individual invocations.
  */
 
-import type { CompileResult, EngineHandle, FileInput, LogEntry, RunResult } from '../core/types';
+import type {
+  CompileResult,
+  EngineConfig,
+  EngineHandle,
+  EngineId,
+  FileInput,
+  LogEntry,
+  RunResult,
+} from '../core/types';
+import type { RunLimits } from '../engines/base';
 import { PdfLatex } from '../engines/pdflatex';
 import { XeLatex } from '../engines/xelatex';
 import { LuaLatex } from '../engines/lualatex';
@@ -38,6 +47,16 @@ export interface LatexmkOptions {
   engine: LatexmkEngine;
   mainTex: string;
   files: FileInput[];
+  /**
+   * How to build the engines this driver needs. Every engine is a separate
+   * wasm artifact, so at minimum each needs its `enginePath`; pass one config
+   * for all of them, or a factory to vary it per engine:
+   *
+   *     engineConfig: (id) => ({ enginePath: `/texlive-wasm/${id}.wasm`, bundleUrl })
+   *
+   * Engines supplied via `handles` are used as-is and ignore this.
+   */
+  engineConfig?: EngineConfig | ((id: EngineId) => EngineConfig);
   /** 'auto' (default) inspects the source; true forces; false skips. */
   bibtex?: boolean | 'auto';
   /**
@@ -55,9 +74,22 @@ export interface LatexmkOptions {
   rerun?: boolean | 'auto' | { maxPasses: number };
   /** Pass -synctex=1 so the engine emits a .synctex.gz. Default: false. */
   synctex?: boolean;
+  /**
+   * Deadline for the WHOLE pipeline, in ms — every pass and every helper
+   * shares it, so a document that loops forever cannot outlive it by running
+   * one more pass. Default: none (each individual invocation still carries
+   * the wrapper default, see engines/base DEFAULT_RUN_TIMEOUT_MS).
+   * Enforcing it terminates the engine worker.
+   */
+  timeoutMs?: number;
+  /** Cancels the pipeline — same worker-terminating semantics as `timeoutMs`. */
+  signal?: AbortSignal;
   /** Verbosity forwarded to engines this driver creates. */
   verbose?: 'silent' | 'info' | 'debug';
-  /** Engines to reuse instead of spawning new ones. */
+  /**
+   * Engines to reuse instead of letting this driver build them from
+   * `engineConfig` — e.g. handles kept alive by an EngineManager.
+   */
   handles?: {
     tex?: EngineHandle;
     bibtex?: EngineHandle;
@@ -156,6 +188,22 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
     logs.push({ cmd, exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, log: r.log });
   };
 
+  // The deadline covers the pipeline, not one invocation: each engine call
+  // gets whatever is left of it, so extra passes cannot extend it.
+  const deadline = opts.timeoutMs !== undefined ? performance.now() + opts.timeoutMs : null;
+  const budget = (): RunLimits => {
+    const limits: RunLimits = {};
+    if (opts.signal) limits.signal = opts.signal;
+    if (deadline !== null) {
+      const left = Math.ceil(deadline - performance.now());
+      if (left <= 0) {
+        throw new Error(`latexmk: pipeline exceeded timeoutMs=${opts.timeoutMs}`);
+      }
+      limits.timeoutMs = left;
+    }
+    return limits;
+  };
+
   try {
     while (pass < maxPasses) {
       pass++;
@@ -163,6 +211,7 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
         mainTex: opts.mainTex,
         files: pass === 1 ? opts.files : materialize(),
         extraArgs: texExtraArgs,
+        ...budget(),
         // XeTeX in WASM cannot spawn xdvipdfmx itself (no popen); we always
         // hold the .xdv and finalize with our own xdvipdfmx pass below.
         ...(isXetex ? { noPdf: true } : {}),
@@ -176,10 +225,11 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
 
       // Bibtex on the first pass that produced an .aux.
       if (pass === 1 && needBibtex && outputs.has(auxPath)) {
-        bibtexWrapper ??= new Bibtexu(wrapperConfig(opts, opts.handles?.bibtex));
+        bibtexWrapper ??= new Bibtexu(wrapperConfig(opts, 'bibtexu', opts.handles?.bibtex));
         const r = await bibtexWrapper.run({
           auxFile: auxPath,
           files: materialize(),
+          ...budget(),
           // biblatex's aux needs bibtex8's "wolfgang" capacity mode; the
           // switch is harmless for classic .bst documents but only biblatex
           // requires it, so keep classic invocations byte-identical.
@@ -203,8 +253,8 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
         const bcfNow = bytesToString(outputs.get(bcfPath));
         if (bcfNow !== lastBcf) {
           lastBcf = bcfNow;
-          biberWrapper ??= new Biber(wrapperConfig(opts, opts.handles?.biber));
-          const r = await biberWrapper.run({ jobname: base, files: materialize() });
+          biberWrapper ??= new Biber(wrapperConfig(opts, 'biber', opts.handles?.biber));
+          const r = await biberWrapper.run({ jobname: base, files: materialize(), ...budget() });
           pushLog(`biber ${base}`, r);
           outputs = mergeOutputs(outputs, r.outputs);
           // biber exits 0 on success (warnings included); >=2 is a hard error.
@@ -221,11 +271,26 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
         const idxNow = bytesToString(outputs.get(idxPath));
         if (idxNow !== lastIdx) {
           lastIdx = idxNow;
-          makeindexWrapper ??= new Makeindex(wrapperConfig(opts, opts.handles?.makeindex));
-          const r = await makeindexWrapper.run({ idxFile: idxPath, files: materialize() });
+          makeindexWrapper ??= new Makeindex(
+            wrapperConfig(opts, 'makeindex', opts.handles?.makeindex),
+          );
+          const r = await makeindexWrapper.run({
+            idxFile: idxPath,
+            files: materialize(),
+            ...budget(),
+          });
           pushLog(`makeindex ${idxPath}`, r);
           outputs = mergeOutputs(outputs, r.outputs);
-          if (r.exitCode === 0) helpersRan = true;
+          // A failed makeindex used to be swallowed: the document still built,
+          // but with a stale or missing index and success:true — a wrong
+          // document reported as a right one. makeindex exits non-zero only on
+          // real errors (a bad style file, unreadable .idx), so treat it like
+          // every other helper failure.
+          if (r.exitCode !== 0) {
+            exitCode = r.exitCode;
+            break;
+          }
+          helpersRan = true;
         }
       }
 
@@ -242,8 +307,13 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
 
     // For xelatex, finalize via xdvipdfmx on the held .xdv.
     if (isXetex && exitCode === 0 && outputs.has(xdvPath)) {
-      xdvipdfmxWrapper ??= new Xdvipdfmx(wrapperConfig(opts, opts.handles?.xdvipdfmx));
-      const r = await xdvipdfmxWrapper.run({ xdv: xdvPath, pdf: pdfPath, files: materialize() });
+      xdvipdfmxWrapper ??= new Xdvipdfmx(wrapperConfig(opts, 'xdvipdfmx', opts.handles?.xdvipdfmx));
+      const r = await xdvipdfmxWrapper.run({
+        xdv: xdvPath,
+        pdf: pdfPath,
+        files: materialize(),
+        ...budget(),
+      });
       pushLog(`xdvipdfmx -o ${pdfPath} ${xdvPath}`, r);
       outputs = mergeOutputs(outputs, r.outputs);
       if (r.exitCode !== 0) exitCode = r.exitCode;
@@ -351,16 +421,30 @@ function mergeOutputs(
   return base;
 }
 
+/**
+ * Options for one wrapper: a caller-supplied handle wins; otherwise the
+ * engine is built from `engineConfig`, which is the only way this driver can
+ * know where the engine's .wasm lives.
+ */
 function wrapperConfig(
   opts: LatexmkOptions,
+  id: EngineId,
   handle: EngineHandle | undefined,
-): { engine?: EngineHandle; verbose?: 'silent' | 'info' | 'debug' } {
+): EngineWrapperConfig {
   if (handle) return { engine: handle };
-  return opts.verbose ? { verbose: opts.verbose } : {};
+  const config =
+    typeof opts.engineConfig === 'function' ? opts.engineConfig(id) : (opts.engineConfig ?? {});
+  const { useWorker: _useWorker, ...wrapperSafe } = config;
+  return {
+    ...wrapperSafe,
+    ...(opts.verbose ? { verbose: opts.verbose } : {}),
+  };
 }
 
+type EngineWrapperConfig = Omit<EngineConfig, 'useWorker'> & { engine?: EngineHandle };
+
 function buildTexEngine(opts: LatexmkOptions): PdfLatex | XeLatex | LuaLatex {
-  const config = wrapperConfig(opts, opts.handles?.tex);
+  const config = wrapperConfig(opts, opts.engine, opts.handles?.tex);
   if (opts.engine === 'pdflatex') return new PdfLatex(config);
   if (opts.engine === 'xelatex') return new XeLatex(config);
   return new LuaLatex(config);

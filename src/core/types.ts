@@ -26,6 +26,20 @@ export interface EngineConfig {
    */
   bundleUrl?: string;
   /**
+   * SHA-256 (hex) of the bundle at `bundleUrl`. Required for a cross-origin
+   * bundle: those bytes are the entire TeX tree the engine executes. A bundle
+   * named by a manifest carries its digest there (`coreBundleSha256`) and
+   * needs nothing here.
+   */
+  bundleSha256?: string;
+  /**
+   * Load assets that nothing pins: a cross-origin bundle with no SHA-256, and
+   * cached/CDN files when no manifest is available to check them against.
+   * Default: false. Development escape hatch — in production a bundle is
+   * either same-origin, digest-pinned, or not loaded.
+   */
+  allowUnverifiedAssets?: boolean;
+  /**
    * URL of `icudt78l.dat` (ICU locale data). Only used by ICU engines
    * (xelatex, bibtexu); without it, locale-specific ICU APIs return
    * U_MISSING_RESOURCE_ERROR but basic operation still works.
@@ -88,6 +102,13 @@ export interface RunOptions {
    */
   timeoutMs?: number;
   /**
+   * Cancels the run. Like `timeoutMs`, cancellation terminates the worker
+   * (callMain cannot be interrupted), so the handle is unusable afterwards.
+   * Consumed on the main thread — an AbortSignal is not structured-cloneable
+   * and never crosses the worker boundary.
+   */
+  signal?: AbortSignal;
+  /**
    * If true (default), the worker parses missing-file errors out of the .log
    * after a failed compile, asks the VFS backends for those paths, writes
    * them into MEMFS, and retries the compile once. Set false to disable, or
@@ -102,7 +123,12 @@ export interface RunResult {
   exitCode: number;
   stdout: string;
   stderr: string;
-  /** Files the engine wrote under /project, keyed by path. */
+  /**
+   * Files the engine PRODUCED under /project, keyed by path. Inputs the
+   * caller supplied are not echoed back unless the engine rewrote them with
+   * different bytes — on a multi-pass compile the project's images and fonts
+   * would otherwise cross the worker boundary once per pass.
+   */
   outputs: Map<string, Uint8Array>;
   /** Convenience: concatenated TeX `.log` if present. */
   log: string;
@@ -110,6 +136,12 @@ export interface RunResult {
   durationMs: number;
   /** How many lazy-fetch retries the worker had to perform. */
   lazyFetchRetries?: number;
+  /**
+   * Whether the TeX tree was mounted lazily (bytes stay JS-side) or copied
+   * into the wasm heap eagerly. False means every instance paid for a full
+   * TDS copy — the eager fallback is correct but costs hundreds of MB.
+   */
+  lazyTds?: boolean;
 }
 
 export interface LogEntry {

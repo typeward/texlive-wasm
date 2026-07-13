@@ -111,10 +111,34 @@ thumb:
 - `maxLiveEngines: 1` on phones; 2 on tablets at most.
 - Leave `persistTexmfVar` on (default): luaotfload's font database survives
   between runs instead of rebuilding for seconds each compile.
+- Leave `lazyTds` on (default): the TeX tree's bytes stay JS-side and are
+  copied into the wasm heap only as the engine reads them. If you see
+  "materializing the TeX tree eagerly" in the console, the engine artifact
+  predates the lazy backend — rebuild it. The fallback is correct but costs
+  a full copy of the tree per engine instance.
 - Catch `EngineOutOfMemoryError` (stable `error.name` across the worker
   boundary): dispose idle engines via the manager and retry once.
 - On iOS, surface `didReceiveMemoryWarning` from Swift as a Tauri event and
   call `manager.dispose()` for idle engines when it fires.
+
+## Compiling untrusted documents
+
+TeX is a programming language. A document from someone else — a shared
+project, a downloaded template — can loop forever, recurse until the heap is
+gone, or write files until storage is full. None of that escapes the wasm
+sandbox (there is no `\write18`: shell-escape is off and `fork` is `ENOSYS`),
+but on a phone an unbounded compile is an unresponsive app and a hot battery.
+
+- Every typed wrapper and `latexmk` carry a 5-minute default deadline
+  (`DEFAULT_RUN_TIMEOUT_MS`). Lower it for untrusted input; `timeoutMs: 0`
+  removes it. On `latexmk` the deadline covers the *whole pipeline*, so extra
+  passes cannot extend it.
+- Pass an `AbortSignal` to let the user cancel a compile.
+- Enforcing either one terminates the worker, so the handle is dead
+  afterwards — recreate it via the manager (which is why runs are leased: an
+  engine cannot be evicted mid-compile).
+- Bundle/decompression size is capped (`MAX_DECOMPRESSED_BYTES`, 512 MB) so a
+  malformed or hostile archive cannot expand without bound.
 
 ## Performance notes
 
@@ -122,9 +146,11 @@ thumb:
   every run (WKWebView has no code cache — without this every compile would
   pay a full multi-MB wasm compile). Keep handles alive across compiles;
   don't create/dispose per run.
-- The first run per worker pays bundle unpack + MEMFS population; later runs
-  reuse the in-worker file map. Expect the first compile to be several times
-  slower than steady state on mobile CPUs.
+- The first run per worker pays the bundle unpack; later runs reuse the
+  in-worker file map and mount it lazily. Expect the first compile to be
+  several times slower than steady state on mobile CPUs.
+- `run()` hands back only what the engine *produced* — the images and fonts
+  you passed in are not echoed back across the worker boundary on every pass.
 - The worker regenerates the kpathsea `ls-R` database per run and sets
   `TEXMFDBS`, so file lookups are hash hits even after lazy fetches.
 

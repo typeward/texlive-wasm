@@ -3,19 +3,29 @@
  *
  * Browser layout under the OPFS root:
  *   texlive-wasm/
- *     full/                    (unpacked full-tier bundle)
- *       tex/latex/base/article.cls
- *       ...
- *     cdn/                     (cached long-tail fetches, written through
+ *     <manifest version>/      (see `version` — caches never span TL builds)
+ *       full/                  (unpacked full-tier bundle)
+ *         tex/latex/base/article.cls
+ *         ...
+ *       cdn/                   (cached long-tail fetches, written through
  *                               from FetchFS via OpfsBackend.write())
- *       tex/latex/some-rare/rare.sty
+ *         tex/latex/some-rare/rare.sty
  */
 
 import type { VfsBackend } from '../core/types';
+import { safeRelativePath } from '../core/paths';
 
 export interface OpfsFsOptions {
   /** Root directory name within OPFS. Default: "texlive-wasm". */
   rootName?: string;
+  /**
+   * Namespace the cache by the TL build it belongs to (the manifest's
+   * `version`). Files cached for one build are not valid for another — and an
+   * unversioned cache is a place for one document's poisoned download to
+   * outlive it. Default: "unversioned", which keeps pre-existing caches
+   * readable.
+   */
+  version?: string;
 }
 
 /** VfsBackend plus the write-through hook FetchFS feeds (see vfs/index.ts). */
@@ -26,19 +36,22 @@ export interface OpfsBackend extends VfsBackend {
 
 export async function createOpfsFs(opts: OpfsFsOptions = {}): Promise<OpfsBackend> {
   const rootName = opts.rootName ?? 'texlive-wasm';
+  const version = opts.version ?? 'unversioned';
   const root = await navigator.storage.getDirectory();
   // Ensure the top-level dirs exist.
   const tlRoot = await root.getDirectoryHandle(rootName, { create: true });
-  const fullDir = await tlRoot.getDirectoryHandle('full', { create: true });
-  const cdnDir = await tlRoot.getDirectoryHandle('cdn', { create: true });
+  const versionRoot = await tlRoot.getDirectoryHandle(safeSegment(version), { create: true });
+  const fullDir = await versionRoot.getDirectoryHandle('full', { create: true });
+  const cdnDir = await versionRoot.getDirectoryHandle('cdn', { create: true });
 
   async function walkTo(
     dir: FileSystemDirectoryHandle,
     tdsPath: string,
     create: boolean,
   ): Promise<{ dir: FileSystemDirectoryHandle; name: string } | null> {
-    const parts = tdsPath.split('/').filter((p) => p !== '' && p !== '.');
-    if (parts.length === 0 || parts.includes('..')) return null;
+    const safe = safeRelativePath(tdsPath);
+    if (!safe) return null;
+    const parts = safe.split('/');
     let cur: FileSystemDirectoryHandle = dir;
     for (let i = 0; i < parts.length - 1; i++) {
       try {
@@ -86,4 +99,9 @@ export async function createOpfsFs(opts: OpfsFsOptions = {}): Promise<OpfsBacken
       }
     },
   };
+}
+
+/** A manifest version reaches us as a string; it must stay one path segment. */
+function safeSegment(name: string): string {
+  return name.replace(/[^\w.-]+/g, '_') || 'unversioned';
 }

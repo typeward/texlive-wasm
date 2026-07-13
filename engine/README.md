@@ -29,11 +29,30 @@ same layout automatically (`.github/workflows/release.yml`).
 
 ## Pinned versions
 
-| Tool | Version |
-|---|---|
-| Emscripten | 5.0.7 |
-| wasi-sdk | 33.0 |
-| TL upstream branch | `branch2026` (commit `fb61589266`, "tl26 post-release") |
+| Tool | Version | Pinned by |
+|---|---|---|
+| Debian base image | bookworm-slim | manifest digest (`Dockerfile`) |
+| Emscripten | 5.0.7 | emsdk commit, asserted after clone (`Dockerfile`) |
+| wasi-sdk | 33.0 | tarball sha256, verified before unpack (`Dockerfile`) |
+| TL upstream branch | `branch2026` (commit `fb61589266`, "tl26 post-release") | submodule |
+| Source tarballs (perl, libxml2, biber, XS dists) | see `scripts/biber/spike-build.sh` | sha256 via `scripts/fetch-verify.sh` |
+| cpanminus + biber's pure-perl closure | 1.7049 + 65 dists | sha256 (`scripts/biber/cpan-lock.txt`) |
+
+Nothing in the image or the biber build is fetched without a digest or a
+sha256. The one exception is `apt-get install` in the Dockerfile, whose
+packages are signed by the Debian archive key but not version-pinned: the
+base-image digest fixes the snapshot they resolve against, not their versions.
+
+`cpan-lock.txt` is the complete pure-perl dependency closure of biber, in
+dependency order. Builds install exactly it, from a local mirror, with
+`cpanm --mirror-only` — a dist that is missing from the lock cannot be
+resolved at all, so the build fails instead of silently pulling an unpinned
+tarball off CPAN. To change the dependency set, edit `CPAN_MODULES` in
+`scripts/biber/spike-build.sh` and regenerate (needs network, maintainer-run):
+
+```bash
+bash scripts/biber/spike-build.sh cpan-lock   # rewrites cpan-lock.txt
+```
 
 ## Status
 

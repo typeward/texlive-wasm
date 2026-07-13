@@ -1,21 +1,33 @@
 name: ci
 
-# Manual-only for now — this repo's main cost is the engine build, which
-# already has its own manual workflow (build-engines.yml). The library CI
-# (lint/typecheck/test/build) runs on demand from the Actions tab.
+# Library CI (lint/typecheck/test/build). Runs on every PR and on every push
+# to main — the engine build is the expensive part of this repo and keeps its
+# own manual workflow (build-engines.yml); the TS wrapper is cheap and must
+# never regress unnoticed.
+#
+# Third-party actions are pinned by commit SHA (the tag on the comment is the
+# release the SHA belongs to). A tag can be re-pointed at new code; a commit
+# cannot.
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   typecheck-lint-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 20
           cache: npm

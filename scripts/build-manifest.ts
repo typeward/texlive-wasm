@@ -16,7 +16,11 @@
  *   --out <path>          Output manifest path. Defaults to
  *                         dist/tex-packages.json.
  *   --core-bundle-url     Optional URL to embed in the manifest.
+ *   --core-bundle-file    The packed core bundle. Hashed into coreBundleSha256,
+ *                         which is what the runtime verifies the download
+ *                         against before unpacking it.
  *   --full-bundle-url     Optional URL to embed.
+ *   --full-bundle-file    As --core-bundle-file, for the full tier.
  *   --cdn-base-url        Optional URL to embed.
  *   --version <id>        e.g. "texlive-wasm-2026.0".
  */
@@ -39,7 +43,9 @@ interface Manifest {
   version: string;
   generatedAt: string;
   coreBundleUrl: string | null;
+  coreBundleSha256: string | null;
   fullBundleUrl: string | null;
+  fullBundleSha256: string | null;
   cdnBaseUrl: string | null;
   files: Record<string, ManifestEntry>;
 }
@@ -52,7 +58,9 @@ async function main(): Promise<void> {
       'full-strip': { type: 'string', default: 'engine/configs/mobile-strip.list' },
       out: { type: 'string', default: 'dist/tex-packages.json' },
       'core-bundle-url': { type: 'string', default: '' },
+      'core-bundle-file': { type: 'string', default: '' },
       'full-bundle-url': { type: 'string', default: '' },
+      'full-bundle-file': { type: 'string', default: '' },
       'cdn-base-url': { type: 'string', default: '' },
       version: { type: 'string', default: `texlive-wasm-dev-${Date.now()}` },
     },
@@ -81,12 +89,27 @@ async function main(): Promise<void> {
     );
   }
 
+  // The runtime verifies the whole compressed bundle against this digest
+  // before it unpacks it (src/vfs/bundlefs.ts), so a cross-origin bundle
+  // published without one will simply refuse to load.
+  const coreBundleSha256 = await hashBundle(values['core-bundle-file']!, '--core-bundle-file');
+  const fullBundleSha256 = await hashBundle(values['full-bundle-file']!, '--full-bundle-file');
+  if (values['core-bundle-url'] && !coreBundleSha256) {
+    console.warn(
+      'build-manifest: --core-bundle-url given without --core-bundle-file, so the manifest ' +
+        'carries no coreBundleSha256. A cross-origin bundle without a digest is refused at ' +
+        'runtime; pass the packed .tar.gz so its hash can be recorded.',
+    );
+  }
+
   const manifest: Manifest = {
     schema: 1,
     version: values.version!,
     generatedAt: new Date().toISOString(),
     coreBundleUrl: values['core-bundle-url'] || null,
+    coreBundleSha256,
     fullBundleUrl: values['full-bundle-url'] || null,
+    fullBundleSha256,
     cdnBaseUrl: values['cdn-base-url'] || null,
     files,
   };
@@ -106,6 +129,19 @@ async function main(): Promise<void> {
       `  files: ${Object.keys(files).length} (core ${counts.core}, full ${counts.full}, cdn ${counts.cdn})\n` +
       `  bundled size: ${(totalSize / 1024 / 1024).toFixed(1)} MB (uncompressed, core+full)`,
   );
+}
+
+async function hashBundle(path: string, flag: string): Promise<string | null> {
+  if (!path) return null;
+  const abs = resolve(path);
+  const bytes = await readFile(abs).catch(() => null);
+  if (!bytes) {
+    throw new Error(`build-manifest: ${flag} ${abs} does not exist`);
+  }
+  if (bytes.byteLength === 0) {
+    throw new Error(`build-manifest: ${flag} ${abs} is empty — that is not a bundle`);
+  }
+  return createHash('sha256').update(bytes).digest('hex');
 }
 
 async function* walk(dir: string): AsyncGenerator<string> {

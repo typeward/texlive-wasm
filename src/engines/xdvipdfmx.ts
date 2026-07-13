@@ -1,7 +1,7 @@
-import { BaseEngineWrapper } from './base';
+import { BaseEngineWrapper, limitsOf, type RunLimits } from './base';
 import type { EngineId, FileInput, RunResult } from '../core/types';
 
-export interface XdvipdfmxOptions {
+export interface XdvipdfmxOptions extends RunLimits {
   /** Input .xdv path. */
   xdv: string;
   /** Output .pdf path. */
@@ -15,6 +15,6 @@ export class Xdvipdfmx extends BaseEngineWrapper {
 
   async run(options: XdvipdfmxOptions): Promise<RunResult> {
     const args: string[] = ['-o', options.pdf, ...(options.extraArgs ?? []), options.xdv];
-    return this.runRaw(args, options.files ?? []);
+    return this.runRaw(args, options.files ?? [], limitsOf(options));
   }
 }

@@ -6,8 +6,16 @@
  *
  * The runtime uses this for three things:
  *   1. Decide which backend tier should serve a given TDS path.
- *   2. Verify integrity of bytes we read out of a cache (OPFS/TauriFS) before
- *      handing them to the engine.
+ *   2. Verify bytes before they reach the engine. What that covers, exactly:
+ *      the core bundle is checked as a whole against `coreBundleSha256` before
+ *      it is unpacked (vfs/bundlefs.ts), and every file served out of the OPFS
+ *      cache or fetched from the CDN is checked against its `files[].sha256`
+ *      (withIntegrity + FetchFsOptions.verify in vfs/index.ts). Files inside
+ *      an already-verified bundle are NOT re-hashed one by one, and a file the
+ *      manifest does not list passes through unchecked — the manifest indexes
+ *      the TL tree, it is not an allowlist for everything an app may mount. A
+ *      backend the caller supplies itself (TauriFS, a custom `vfs` chain) is
+ *      the caller's to verify; `withIntegrity()` is exported for that.
  *   3. Reverse-lookup which CTAN package a TDS file belongs to (used in error
  *      messages: "missing geometry.sty — try downloading the 'geometry' package").
  */
@@ -34,8 +42,12 @@ export interface TexPackagesManifest {
   generatedAt: string;
   /** Brotli-compressed core-tier bundle. */
   coreBundleUrl: string | null;
+  /** SHA-256 of the core bundle's compressed bytes, hex. Optional (older manifests). */
+  coreBundleSha256?: string | null;
   /** Brotli-compressed full-tier bundle (downloaded once on first run). */
   fullBundleUrl: string | null;
+  /** SHA-256 of the full bundle's compressed bytes, hex. Optional (older manifests). */
+  fullBundleSha256?: string | null;
   /** CDN base URL for per-file long-tail fetches. */
   cdnBaseUrl: string | null;
   /** TDS-relative path → entry. */
@@ -64,4 +76,31 @@ export function packageOf(manifest: TexPackagesManifest, tdsPath: string): strin
 
 export function expectedSha256(manifest: TexPackagesManifest, tdsPath: string): string | null {
   return manifest.files[tdsPath]?.sha256 ?? null;
+}
+
+/** SHA-256 of `bytes` as lowercase hex. */
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const view = new Uint8Array(bytes.byteLength);
+  view.set(bytes);
+  const digest = await crypto.subtle.digest('SHA-256', view);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Throw unless `bytes` hashes to `expected`. Used on whole blobs — the core
+ * bundle, a CDN file — where a poisoned byte stream would otherwise be
+ * executed as TeX macros or cached for every later session. Files served out
+ * of a bundle we already verified are not re-hashed one by one.
+ */
+export async function assertSha256(
+  bytes: Uint8Array,
+  expected: string,
+  what: string,
+): Promise<void> {
+  const actual = await sha256Hex(bytes);
+  if (actual !== expected.toLowerCase()) {
+    throw new Error(
+      `texlive-wasm: integrity check failed for ${what}: expected sha256 ${expected}, got ${actual}`,
+    );
+  }
 }

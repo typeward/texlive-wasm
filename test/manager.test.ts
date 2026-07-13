@@ -1,34 +1,57 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EngineHandle, EngineId } from '../src/core/types';
+import type { EngineHandle, EngineId, RunResult } from '../src/core/types';
 
 const created: EngineId[] = [];
 const disposed: EngineId[] = [];
 let failFor: EngineId | null = null;
+/** Set to hold a run open: the manager must not evict an engine mid-compile. */
+let runGate: { promise: Promise<void>; release: () => void } | null = null;
 
 vi.mock('../src/core/engine', () => ({
   createEngine: async (id: EngineId): Promise<EngineHandle> => {
     if (failFor === id) throw new Error(`boom ${id}`);
     created.push(id);
+    // Mirrors the real handle: disposing terminates the worker, and a
+    // terminated worker reports itself not ready ever after (engine.ts).
+    let ready = true;
     return {
       id,
       config: {},
-      run: async () => {
-        throw new Error('not used in this test');
+      run: async (): Promise<RunResult> => {
+        if (runGate) await runGate.promise;
+        return {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          outputs: new Map(),
+          log: '',
+          durationMs: 1,
+        };
       },
       dispose: async () => {
+        ready = false;
         disposed.push(id);
       },
-      isReady: () => true,
+      isReady: () => ready,
     };
   },
 }));
 
 import { createEngineManager } from '../src/core/manager';
 
+function gate() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
 beforeEach(() => {
   created.length = 0;
   disposed.length = 0;
   failFor = null;
+  runGate = null;
 });
 
 const config = () => ({});
@@ -92,5 +115,113 @@ describe('createEngineManager', () => {
     await mgr.dispose();
     expect(disposed.sort()).toEqual(['bibtexu', 'pdflatex']);
     expect(mgr.live()).toEqual([]);
+  });
+
+  it('never evicts an engine that is mid-run', async () => {
+    const evicted: EngineId[] = [];
+    const mgr = createEngineManager({
+      config,
+      maxLiveEngines: 1,
+      onEvict: (id) => evicted.push(id),
+    });
+    runGate = gate();
+
+    const pdflatex = await mgr.engine('pdflatex');
+    const inFlight = pdflatex.run({ args: ['main.tex'] });
+    // Demand another engine while the first is still inside callMain. Evicting
+    // it here would terminate a worker mid-compile — the run's reply could
+    // never arrive.
+    await mgr.engine('bibtexu');
+    expect(evicted).not.toContain('pdflatex');
+
+    runGate.release();
+    await expect(inFlight).resolves.toMatchObject({ exitCode: 0 });
+
+    // Once the run is done the engine is idle again and may be evicted.
+    await mgr.engine('makeindex');
+    expect(evicted).toContain('pdflatex');
+  });
+
+  it('waits for the evicted engine to be gone before loading the next', async () => {
+    const order: string[] = [];
+    const mgr = createEngineManager({
+      config,
+      maxLiveEngines: 1,
+      onEvict: (id) => order.push(`evict ${id}`),
+      onLoad: (id) => order.push(`load ${id}`),
+    });
+    await mgr.engine('pdflatex');
+    await mgr.engine('bibtexu');
+
+    // The old worker's memory must be released before the new one allocates
+    // its own tree — that peak is the whole point of the cap.
+    expect(order).toEqual(['load pdflatex', 'evict pdflatex', 'load bibtexu']);
+    expect(disposed).toEqual(['pdflatex']);
+    expect(created).toEqual(['pdflatex', 'bibtexu']);
+  });
+
+  it('a handle evicted between two runs reloads instead of dying', async () => {
+    const mgr = createEngineManager({ config, maxLiveEngines: 1 });
+    const pdflatex = await mgr.engine('pdflatex');
+    await pdflatex.run({ args: ['main.tex'] });
+
+    // Another compile takes the only slot; pdflatex is idle, so it is evicted.
+    await mgr.engine('bibtexu');
+    await vi.waitFor(() => expect(disposed).toContain('pdflatex'));
+
+    // The caller still holds its handle. Running it must reload the engine,
+    // not hand back the worker that was terminated underneath it.
+    await expect(pdflatex.run({ args: ['main.tex'] })).resolves.toMatchObject({ exitCode: 0 });
+    expect(created).toEqual(['pdflatex', 'bibtexu', 'pdflatex']);
+  });
+
+  it('reports readiness for the engine the next run would use, not the evicted worker', async () => {
+    const mgr = createEngineManager({ config, maxLiveEngines: 1 });
+    const pdflatex = await mgr.engine('pdflatex');
+    expect(pdflatex.isReady()).toBe(true);
+
+    // Evicted between runs: the worker it was minted around is terminated.
+    await mgr.engine('bibtexu');
+    await vi.waitFor(() => expect(disposed).toContain('pdflatex'));
+    expect(pdflatex.isReady()).toBe(false);
+
+    // run() reloads it, so isReady() must agree that it is live again rather
+    // than keep answering for the worker that is gone.
+    await pdflatex.run({ args: ['main.tex'] });
+    expect(pdflatex.isReady()).toBe(true);
+  });
+
+  it('does not evict the engine a leased handle is about to run on', async () => {
+    const evicted: EngineId[] = [];
+    const mgr = createEngineManager({
+      config,
+      maxLiveEngines: 1,
+      onEvict: (id) => evicted.push(id),
+    });
+    runGate = gate();
+
+    const pdflatex = await mgr.engine('pdflatex');
+    // run() pins synchronously, before it awaits the worker — so a compile
+    // that starts in the same tick cannot take the slot out from under it.
+    const inFlight = pdflatex.run({ args: ['main.tex'] });
+    const other = mgr.engine('bibtexu');
+
+    expect(evicted).not.toContain('pdflatex');
+    runGate.release();
+    await expect(inFlight).resolves.toMatchObject({ exitCode: 0 });
+    await other;
+  });
+
+  it('disposing a leased handle retires the slot rather than leaving a dead one', async () => {
+    const mgr = createEngineManager({ config });
+    const first = await mgr.engine('pdflatex');
+    await first.dispose();
+    expect(disposed).toEqual(['pdflatex']);
+    expect(mgr.live()).toEqual([]);
+
+    // The next request must build a fresh worker, not hand back the dead one.
+    const second = await mgr.engine('pdflatex');
+    expect(second).not.toBe(first);
+    expect(created).toEqual(['pdflatex', 'pdflatex']);
   });
 });

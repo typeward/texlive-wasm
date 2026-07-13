@@ -3,7 +3,9 @@
 export interface TarSpec {
   path: string;
   content?: Uint8Array | string;
-  type?: 'file' | 'dir' | 'gnu-long-name' | 'pax';
+  type?: 'file' | 'dir' | 'gnu-long-name' | 'pax' | 'symlink' | 'hardlink' | 'chardev';
+  /** Override the size field only — for headers that lie about their payload. */
+  declaredSize?: number;
 }
 
 export function buildTar(specs: TarSpec[]): Uint8Array {
@@ -13,7 +15,9 @@ export function buildTar(specs: TarSpec[]): Uint8Array {
       typeof spec.content === 'string'
         ? new TextEncoder().encode(spec.content)
         : (spec.content ?? new Uint8Array());
-    blocks.push(header(spec.path, content.length, typeflagFor(spec.type ?? 'file')));
+    blocks.push(
+      header(spec.path, spec.declaredSize ?? content.length, typeflagFor(spec.type ?? 'file')),
+    );
     if (content.length > 0) {
       const padded = new Uint8Array(Math.ceil(content.length / 512) * 512);
       padded.set(content);
@@ -31,10 +35,13 @@ export function buildTar(specs: TarSpec[]): Uint8Array {
   return out;
 }
 
-function typeflagFor(type: 'file' | 'dir' | 'gnu-long-name' | 'pax'): number {
+function typeflagFor(type: NonNullable<TarSpec['type']>): number {
   if (type === 'dir') return 0x35; // '5'
   if (type === 'gnu-long-name') return 0x4c; // 'L'
   if (type === 'pax') return 0x78; // 'x'
+  if (type === 'hardlink') return 0x31; // '1'
+  if (type === 'symlink') return 0x32; // '2'
+  if (type === 'chardev') return 0x33; // '3'
   return 0x30; // '0'
 }
 

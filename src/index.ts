@@ -23,7 +23,7 @@ export { Makeindex } from './engines/makeindex';
 export { Xdvipdfmx } from './engines/xdvipdfmx';
 export { createSynctex } from './synctex';
 
-export { loadManifest } from './core/manifest';
+export { loadManifest, expectedSha256, sha256Hex } from './core/manifest';
 
 export type {
   EngineId,
@@ -39,7 +39,8 @@ export type {
 
 export type { LatexmkOptions, LatexmkResult, LatexmkEngine } from './latexmk';
 
-export type { EngineWrapperOptions } from './engines/base';
+export type { EngineWrapperOptions, RunLimits } from './engines/base';
+export { DEFAULT_RUN_TIMEOUT_MS } from './engines/base';
 export type { PdfLatexCompileOptions } from './engines/pdflatex';
 export type { XeLatexCompileOptions } from './engines/xelatex';
 export type { LuaLatexCompileOptions } from './engines/lualatex';
@@ -51,7 +52,8 @@ export type { XdvipdfmxOptions } from './engines/xdvipdfmx';
 export type { BundleFsOptions } from './vfs/bundlefs';
 export type { FetchFsOptions } from './vfs/fetchfs';
 export type { OpfsFsOptions } from './vfs/opfsfs';
-export { createBundleFs, createFetchFs, createOpfsFs, defaultBackends } from './vfs';
+export { createBundleFs, createFetchFs, createOpfsFs, defaultBackends, withIntegrity } from './vfs';
+export type { DefaultBackendsOptions } from './vfs';
 
 export type { TexPackagesManifest, ManifestEntry, ManifestTier } from './core/manifest';
 

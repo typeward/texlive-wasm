@@ -1,0 +1,92 @@
+name: publish-npm
+
+# Republish the wrapper to npm for an EXISTING release tag, without rebuilding
+# anything.
+#
+# The npm package is only the JS wrapper (dist/ + the CLI) — the engines ship as
+# GitHub Release assets, not inside the tarball. So a failed `npm publish` never
+# needs the ~1h engine matrix re-run: it needs a checkout, a build and a publish.
+# release.yml's publish-npm job is gated on the whole pipeline (correctly — do
+# not push a wrapper to npm unless its assets exist), which makes it unusable as
+# a retry path, since re-running it re-runs the gate.
+#
+# Use this when the release itself succeeded and only the npm step failed — e.g.
+# provenance rejecting package.json metadata, a transient registry error, or a
+# trusted publisher configured after the fact.
+#
+# It refuses to publish a tag whose GitHub Release has no assets, so it cannot
+# put a wrapper on npm that points at engine assets which do not exist.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to publish (e.g. v0.2.5-alpha)'
+        required: true
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'typeward/texlive-wasm'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.inputs.tag }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm >= 11.5.1; node 20 bundles npm 10.x.
+      - run: npm install -g 'npm@^11.5.1'
+
+      - name: the release must already carry its engine assets
+        # The version contract is "wrapper on npm == assets on the release tag".
+        # Publishing a wrapper whose assets were never uploaded would hand
+        # consumers a `download-assets` that 404s.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+                    --json assets --jq '.assets | length' 2>/dev/null || echo 0)
+          echo "release $RELEASE_TAG carries $count asset(s)"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::release $RELEASE_TAG has no assets — run release.yml first"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: version guard — package.json must match the release tag
+        run: |
+          pkg_version=$(node -p "require('./package.json').version")
+          if [ "v$pkg_version" != "$RELEASE_TAG" ]; then
+            echo "::error::package.json version ($pkg_version) does not match $RELEASE_TAG — the tag must point at code carrying that version"
+            exit 1
+          fi
+
+      - name: publish to npm
+        # Same dist-tag policy as release.yml: prereleases go to `next` (npm also
+        # refuses to publish one without an explicit --tag).
+        run: |
+          pkg_name=$(node -p "require('./package.json').name")
+          pkg_version=$(node -p "require('./package.json').version")
+          case "$pkg_version" in
+            *-*) dist_tag=next ;;
+            *)   dist_tag=latest ;;
+          esac
+          echo "publishing $pkg_name@$pkg_version (dist-tag: $dist_tag)"
+          npm publish --access public --tag "$dist_tag"

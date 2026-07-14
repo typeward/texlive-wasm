@@ -1,9 +1,9 @@
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from "node:path";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
-const m = await import(join(REPO, "engine-artifacts/pdflatex/emscripten/pdflatex.js"));
+const m = await import(pathToFileURL(join(REPO, "engine-artifacts/pdflatex/emscripten/pdflatex.js")).href);
 
 function walk(FS, absDir, mfsDir) {
   if (!FS.analyzePath(mfsDir).exists) FS.mkdir(mfsDir);

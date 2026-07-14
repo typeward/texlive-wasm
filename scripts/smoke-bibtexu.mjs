@@ -4,7 +4,7 @@
  * .bst, invoke bibtexu, verify it produces a non-empty .bbl.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -34,7 +34,7 @@ const BIB = `@book{KnuthArt,
 }
 `;
 
-const mod = await import(join(REPO, 'engine-artifacts/bibtexu/emscripten/bibtexu.js'));
+const mod = await import(pathToFileURL(join(REPO, 'engine-artifacts/bibtexu/emscripten/bibtexu.js')).href);
 const M = await mod.default({
   noInitialRun: true,
   thisProgram: '/bin/bibtexu',

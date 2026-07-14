@@ -4,7 +4,7 @@
  * invoke makeindex, verify it produces a .ind with the expected entries.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -28,7 +28,7 @@ const IDX = `\\indexentry{algorithm}{2}
 \\indexentry{recursion}{8}
 `;
 
-const mod = await import(join(REPO, 'engine-artifacts/makeindex/emscripten/makeindex.js'));
+const mod = await import(pathToFileURL(join(REPO, 'engine-artifacts/makeindex/emscripten/makeindex.js')).href);
 const M = await mod.default({
   noInitialRun: true,
   thisProgram: '/bin/makeindex',

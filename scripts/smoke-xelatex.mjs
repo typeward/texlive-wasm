@@ -3,7 +3,7 @@
  * smoke-xelatex.mjs — end-to-end test: xelatex → .xdv → (xdvipdfmx) → .pdf
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -48,7 +48,7 @@ function mkdirP(FS, p) {
 }
 
 async function instantiateEngine(engineName, withICU) {
-  const mod = await import(join(REPO_ROOT, `engine-artifacts/${engineName}/emscripten/${engineName}.js`));
+  const mod = await import(pathToFileURL(join(REPO_ROOT, `engine-artifacts/${engineName}/emscripten/${engineName}.js`)).href);
   const M = await mod.default({
     noInitialRun: true,
     thisProgram: `/bin/${engineName}`,

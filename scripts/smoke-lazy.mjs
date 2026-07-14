@@ -60,6 +60,13 @@ const backendMeta = [{ id: 'local-texmf', hasList: true, hasInit: false, hasDisp
 
 const { WorkerImpl } = await import(pathToFileURL(join(REPO, 'dist/worker.js')).href);
 
+// XeTeX cannot spawn xdvipdfmx in wasm (no popen), so it stops at the .xdv —
+// that is the artifact to compare for it. It also needs ICU's locale data.
+const isXetex = engine === 'xelatex';
+const OUTPUT = isXetex ? 'hello.xdv' : 'hello.pdf';
+const EXTRA_ARGS = isXetex ? ['--no-pdf'] : [];
+const icuData = isXetex ? readFileSync(join(artifacts, 'icudt78l.dat')) : null;
+
 async function compile(lazyTds) {
   const worker = new WorkerImpl();
   await worker.init(
@@ -67,13 +74,14 @@ async function compile(lazyTds) {
       engineId: engine,
       config: { enginePath: pathToFileURL(artifact).href, lazyTds },
       backendMeta,
+      ...(icuData ? { icuData: new Uint8Array(icuData) } : {}),
     },
     host,
   );
   const before = process.memoryUsage();
   const started = performance.now();
   const result = await worker.run({
-    args: ['-interaction=nonstopmode', 'hello.tex'],
+    args: ['-interaction=nonstopmode', ...EXTRA_ARGS, 'hello.tex'],
     files: [{ path: 'hello.tex', content: DOC }],
   });
   const elapsed = performance.now() - started;
@@ -90,7 +98,7 @@ for (const [name, run] of [
   ['lazy ', lazy],
   ['eager', eager],
 ]) {
-  const pdf = run.result.outputs.get('hello.pdf');
+  const pdf = run.result.outputs.get(OUTPUT);
   console.log(
     `${name} | exit ${run.result.exitCode} | lazyTds=${String(run.result.lazyTds).padEnd(5)} | ` +
       `${run.elapsed.toFixed(0).padStart(5)} ms | rss +${fmt(run.rss).padStart(6)} | ` +
@@ -110,13 +118,13 @@ if (lazy.result.lazyTds !== true) {
 }
 if (eager.result.lazyTds !== false) fail('lazyTds: false did not force the eager path');
 
-const lazyPdf = lazy.result.outputs.get('hello.pdf');
-const eagerPdf = eager.result.outputs.get('hello.pdf');
-if (!lazyPdf || !eagerPdf) fail('no PDF produced');
-// The PDFs carry a creation timestamp, so compare what the engine typeset:
-// same length and same bytes outside the /ID and /CreationDate spans.
+const lazyPdf = lazy.result.outputs.get(OUTPUT);
+const eagerPdf = eager.result.outputs.get(OUTPUT);
+if (!lazyPdf || !eagerPdf) fail(`no ${OUTPUT} produced`);
+// The output carries a creation timestamp, so compare what the engine typeset
+// rather than demanding byte equality.
 if (Math.abs(lazyPdf.length - eagerPdf.length) > 64) {
-  fail(`PDFs differ in size: lazy ${lazyPdf.length} vs eager ${eagerPdf.length}`);
+  fail(`${OUTPUT} differs in size: lazy ${lazyPdf.length} vs eager ${eagerPdf.length}`);
 }
 
 // Inputs must not be echoed back out.

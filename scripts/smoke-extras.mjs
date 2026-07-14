@@ -4,7 +4,7 @@
  * tikz, biblatex, IEEEtran, algorithm2e) actually compile.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -48,7 +48,7 @@ The speed of light is \\SI{2.998e8}{\\meter\\per\\second}.
 \\end{document}
 `;
 
-const mod = await import(join(REPO, 'engine-artifacts/pdflatex/emscripten/pdflatex.js'));
+const mod = await import(pathToFileURL(join(REPO, 'engine-artifacts/pdflatex/emscripten/pdflatex.js')).href);
 const M = await mod.default({
   noInitialRun: true,
   thisProgram: '/bin/pdflatex',

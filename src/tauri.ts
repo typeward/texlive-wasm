@@ -6,8 +6,8 @@
  *
  * Usage in a SolidJS + Tauri app:
  *
- *   import { createEngine } from 'texlive-wasm';
- *   import { withTauriFs } from 'texlive-wasm/tauri';
+ *   import { createEngine } from '@typeward/texlive-wasm';
+ *   import { withTauriFs } from '@typeward/texlive-wasm/tauri';
  *   import { BaseDirectory } from '@tauri-apps/plugin-fs';
  *
  *   const engine = await withTauriFs(

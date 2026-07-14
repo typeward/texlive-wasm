@@ -6,7 +6,7 @@
  */
 
 import { For, Show, createSignal } from 'solid-js';
-import { createSynctex } from 'texlive-wasm';
+import { createSynctex } from '@typeward/texlive-wasm';
 import { CompilePanel } from '../CompilePanel';
 import { SYNCTEX } from '../samples';
 

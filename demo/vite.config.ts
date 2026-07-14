@@ -93,6 +93,6 @@ export default defineConfig({
     plugins: () => [wasm(), topLevelAwait()],
   },
   optimizeDeps: {
-    exclude: ['texlive-wasm'],
+    exclude: ['@typeward/texlive-wasm'],
   },
 });

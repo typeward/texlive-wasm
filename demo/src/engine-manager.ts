@@ -4,7 +4,7 @@
  * per-engine Web Workers, exactly as a consumer app would use it.
  */
 
-import { createEngine, latexmk, willRunBibtex, willRunBiber } from 'texlive-wasm';
+import { createEngine, latexmk, willRunBibtex, willRunBiber } from '@typeward/texlive-wasm';
 import type {
   EngineHandle,
   EngineId,
@@ -12,7 +12,7 @@ import type {
   LatexmkEngine,
   LatexmkOptions,
   LatexmkResult,
-} from 'texlive-wasm';
+} from '@typeward/texlive-wasm';
 import { createSignal } from 'solid-js';
 
 /** Human-readable artifact sizes for status messages (see README table). */

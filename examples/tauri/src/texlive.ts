@@ -10,10 +10,10 @@
  * @tauri-apps/plugin-fs — no network, no OPFS copy.
  */
 
-import { createEngine, PdfLatex as _PdfLatex } from 'texlive-wasm';
-import { withTauriFs, isTauri } from 'texlive-wasm/tauri';
-import type { EngineConfig, EngineHandle, VfsBackend } from 'texlive-wasm';
-import type { PdfLatexCompileOptions, RunResult } from 'texlive-wasm';
+import { createEngine, PdfLatex as _PdfLatex } from '@typeward/texlive-wasm';
+import { withTauriFs, isTauri } from '@typeward/texlive-wasm/tauri';
+import type { EngineConfig, EngineHandle, VfsBackend } from '@typeward/texlive-wasm';
+import type { PdfLatexCompileOptions, RunResult } from '@typeward/texlive-wasm';
 
 // BaseDirectory.Resource in Tauri 2 (@tauri-apps/api/path). Kept as a
 // number so the web build doesn't import the Tauri API.
@@ -69,4 +69,4 @@ export const PdfLatex = TauriAwarePdfLatex;
 // Type alias so `let engine: PdfLatex` works — the export above is a value.
 export type PdfLatex = TauriAwarePdfLatex;
 export { isTauri };
-export type { RunResult } from 'texlive-wasm';
+export type { RunResult } from '@typeward/texlive-wasm';

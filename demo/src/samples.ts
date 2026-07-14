@@ -3,7 +3,7 @@
  * tests (scripts/smoke-*.mjs) so the site demonstrates exactly what CI proves.
  */
 
-import type { LatexmkEngine } from 'texlive-wasm';
+import type { LatexmkEngine } from '@typeward/texlive-wasm';
 
 export interface SampleFile {
   path: string;

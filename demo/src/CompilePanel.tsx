@@ -5,7 +5,7 @@
  */
 
 import { For, Show, createEffect, createSignal, on, type JSX } from 'solid-js';
-import type { LatexmkResult } from 'texlive-wasm';
+import type { LatexmkResult } from '@typeward/texlive-wasm';
 import { PdfViewer } from './PdfViewer';
 import { compile } from './engine-manager';
 import type { Sample } from './samples';

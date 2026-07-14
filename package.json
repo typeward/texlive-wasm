@@ -1,5 +1,5 @@
 {
-  "name": "texlive-wasm",
+  "name": "@typeward/texlive-wasm",
   "version": "0.2.3-alpha",
   "description": "TeX Live in WebAssembly — pdflatex, xelatex, lualatex in the browser and on the edge. Offline-first, Tauri-friendly.",
   "license": "MIT",
@@ -101,5 +101,8 @@
     "vite-plugin-top-level-await": "^1.4.4",
     "vite-plugin-wasm": "^3.3.0",
     "vitest": "^2.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

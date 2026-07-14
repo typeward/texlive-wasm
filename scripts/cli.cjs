@@ -3,17 +3,17 @@
  * texlive-wasm CLI — fetches engine artifacts and TDS bundles from the
  * matching GitHub Release.
  *
- *   npx texlive-wasm download-assets [dest]
+ *   npx @typeward/texlive-wasm download-assets [dest]
  *     Default dest:    ./public/texlive-wasm
  *     Default version: v<package.json version> (or $TEXLIVE_WASM_VERSION)
  *     Default assets:  all .tar.gz + icudt78l.dat.gz listed in the release's
  *                      checksums.json (the full TDS bundle is large — pass
  *                      --assets to narrow it down).
  *
- *   npx texlive-wasm download-assets --tag v0.1.0 ./static/wasm
- *   npx texlive-wasm download-assets --assets pdflatex-emscripten,texmf-core-pdflatex,icudt78l.dat.gz
+ *   npx @typeward/texlive-wasm download-assets --tag v0.1.0 ./static/wasm
+ *   npx @typeward/texlive-wasm download-assets --assets pdflatex-emscripten,texmf-core-pdflatex,icudt78l.dat.gz
  *     (asset names match checksums.json keys; the .tar.gz/.gz suffix may be omitted)
- *   npx texlive-wasm version
+ *   npx @typeward/texlive-wasm version
  *
  * Engine archives are unpacked to <dest>/<engine>/<target>/ and the download
  * is discarded. TDS bundles (texmf.tar.gz, texmf-core-<engine>.tar.gz) are

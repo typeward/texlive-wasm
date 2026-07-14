@@ -655,7 +655,7 @@ class WorkerImpl implements WorkerApi {
       // in kpathsea, so say what is actually missing instead.
       throw new Error(
         `texlive-wasm: no LaTeX format for ${this.engineId} — ${fmt} is not in the TeX tree. ` +
-          `Install the engine's core bundle ('npx texlive-wasm download-assets') and point ` +
+          `Install the engine's core bundle ('npx @typeward/texlive-wasm download-assets') and point ` +
           `config.bundleUrl or config.manifestUrl at it, or pass your own -fmt=/-ini argument.`,
       );
     }
@@ -787,7 +787,7 @@ class WorkerImpl implements WorkerApi {
     // and a bundler-mangled relative URL would 404 confusingly anyway.
     throw new Error(
       `texlive-wasm: config.enginePath is required. Download the engine artifacts ` +
-        `('npx texlive-wasm download-assets') and pass e.g. ` +
+        `('npx @typeward/texlive-wasm download-assets') and pass e.g. ` +
         `enginePath: '/texlive-wasm/${this.engineId}/emscripten/${this.engineId}.wasm'.`,
     );
   }

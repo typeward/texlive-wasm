@@ -29,6 +29,6 @@ export default defineConfig({
     plugins: () => [wasm(), topLevelAwait()],
   },
   optimizeDeps: {
-    exclude: ['texlive-wasm', '@tauri-apps/plugin-fs', '@tauri-apps/api'],
+    exclude: ['@typeward/texlive-wasm', '@tauri-apps/plugin-fs', '@tauri-apps/api'],
   },
 });

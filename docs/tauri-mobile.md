@@ -61,8 +61,8 @@ URLs must be **absolute** (the worker resolves relative paths against the
 worker script URL, not your page):
 
 ```ts
-import { createEngineManager } from 'texlive-wasm';
-import { withTauriFs } from 'texlive-wasm/tauri';
+import { createEngineManager } from '@typeward/texlive-wasm';
+import { withTauriFs } from '@typeward/texlive-wasm/tauri';
 
 const asset = (p: string) => new URL(p, document.baseURI).href;
 

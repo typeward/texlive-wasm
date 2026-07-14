@@ -41,7 +41,7 @@ return an empty list — position lookup is scheduled for Phase 4.
 ## Install
 
 ```bash
-npm install texlive-wasm
+npm install @typeward/texlive-wasm
 ```
 
 The npm package ships only the JS/TS wrapper (`dist/`) and the CLI.
@@ -51,14 +51,14 @@ first run:
 
 ```bash
 # default → ./public/texlive-wasm/
-npx texlive-wasm download-assets
+npx @typeward/texlive-wasm download-assets
 
 # or specify a destination + pinned tag
-npx texlive-wasm download-assets --tag v0.1.0-alpha.0 ./static/texlive
+npx @typeward/texlive-wasm download-assets --tag v0.1.0-alpha.0 ./static/texlive
 
 # or a subset (skip 100 MB of TDS if you ship your own); names match
 # checksums.json keys, the .tar.gz/.gz suffix may be omitted
-npx texlive-wasm download-assets --assets pdflatex-emscripten,icudt78l.dat
+npx @typeward/texlive-wasm download-assets --assets pdflatex-emscripten,icudt78l.dat
 ```
 
 The CLI looks up `https://github.com/typeward/texlive-wasm/releases/download/<tag>/checksums.json`,
@@ -83,7 +83,7 @@ public/texlive-wasm/
 
 One rule: **the wrapper's npm version, the engine-assets release tag, and
 the manifest version are always the same.** `texlive-wasm@0.2.0` on npm
-pairs with GitHub Release `v0.2.0`, and `npx texlive-wasm download-assets`
+pairs with GitHub Release `v0.2.0`, and `npx @typeward/texlive-wasm download-assets`
 defaults to exactly that tag (`v<package.json version>`).
 
 Engine assets are only guaranteed to work with the same-version wrapper.
@@ -105,8 +105,8 @@ never drift apart across installs.
 
 npm dist-tags follow the release channel: stable versions publish as
 `latest`; `-alpha`/`-beta` prereleases publish under `next`, so
-`npx texlive-wasm` and a bare `npm install texlive-wasm` never resolve a
-prerelease by accident. Opt in with `npm install texlive-wasm@next`.
+`npx @typeward/texlive-wasm` and a bare `npm install texlive-wasm` never resolve a
+prerelease by accident. Opt in with `npm install @typeward/texlive-wasm@next`.
 
 ## Asset integrity
 
@@ -134,7 +134,7 @@ development escape hatch; do not ship it.
 ### Basic — one engine, one file
 
 ```ts
-import { PdfLatex } from 'texlive-wasm';
+import { PdfLatex } from '@typeward/texlive-wasm';
 
 const pdflatex = new PdfLatex({
   enginePath: '/texlive-wasm/pdflatex/emscripten/pdflatex.wasm',
@@ -171,7 +171,7 @@ makeindex / xdvipdfmx as the document needs them), and each is its own wasm
 artifact — so it needs `engineConfig` to know where they live:
 
 ```ts
-import { latexmk } from 'texlive-wasm';
+import { latexmk } from '@typeward/texlive-wasm';
 
 const out = await latexmk({
   engine: 'pdflatex',
@@ -198,7 +198,7 @@ instead — see `createEngineManager` in the API surface below.
 ### Lower level — direct argv
 
 ```ts
-import { createEngine } from 'texlive-wasm';
+import { createEngine } from '@typeward/texlive-wasm';
 
 const engine = await createEngine('xelatex', {
   enginePath: '/texlive-wasm/xelatex/emscripten/xelatex.wasm',
@@ -219,8 +219,8 @@ TeX Live resources directly from disk (no OPFS copy, no per-file fetch
 overhead):
 
 ```ts
-import { createEngine } from 'texlive-wasm';
-import { withTauriFs, isTauri } from 'texlive-wasm/tauri';
+import { createEngine } from '@typeward/texlive-wasm';
+import { withTauriFs, isTauri } from '@typeward/texlive-wasm/tauri';
 import { BaseDirectory } from '@tauri-apps/plugin-fs';
 
 const engine = await withTauriFs(
@@ -258,9 +258,9 @@ import {
   latexmk,                 // multi-pass driver
   createSynctex,           // JS parser for .synctex(.gz) — file list today, lookups in Phase 4
   loadManifest,            // tex-packages.json reader
-} from 'texlive-wasm';
+} from '@typeward/texlive-wasm';
 
-import { withTauriFs, createTauriFs, isTauri } from 'texlive-wasm/tauri';
+import { withTauriFs, createTauriFs, isTauri } from '@typeward/texlive-wasm/tauri';
 ```
 
 VFS chain (consulted in order on every read):
@@ -308,7 +308,7 @@ src/                  — TypeScript wrapper library (MIT)
   synctex/            — JS parser
   tauri.ts            — Tauri entry point
 scripts/
-  cli.cjs             — `npx texlive-wasm`
+  cli.cjs             — `npx @typeward/texlive-wasm`
   pack-release.mjs    — bundle engine-artifacts/ into release/*.tar.gz
   ensure-assets.mjs   — used by examples
 demo/                 — Vite + SolidJS showcase site (deployed to GitHub Pages)

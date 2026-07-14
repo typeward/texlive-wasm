@@ -18,7 +18,7 @@
     "@tauri-apps/plugin-fs": "^2.0.0",
     "comlink": "^4.4.2",
     "solid-js": "^1.9.0",
-    "texlive-wasm": "file:../.."
+    "@typeward/texlive-wasm": "file:../.."
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

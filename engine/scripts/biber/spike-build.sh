@@ -202,17 +202,16 @@ fetch_cpan_mirror() {
 # tree the wasm perl reads via -I (pure perl is architecture-independent).
 #
 # Two resolvers:
-#  - LOCKED (BIBER_CPAN_LOCK=1): install cpan-lock.txt's closure of
-#    sha256-verified tarballs, in dependency order, from a local mirror with
-#    --mirror-only. That mirror carries no package index, so a dist the lock
-#    forgot cannot be silently pulled off CPAN: the build fails instead.
-#  - LIVE (default): let cpanm resolve CPAN_MODULES against CPAN, which is
-#    what has always built biber. The lock's *hashes* are verified but its
-#    completeness and ordering have never been executed end to end, and a
-#    wrong closure fails the build ~35 minutes in. Flip the default once a
-#    container run has proven the locked path green.
+#  - LOCKED (the default): install cpan-lock.txt's closure of sha256-verified
+#    tarballs, in dependency order, from a local mirror with --mirror-only.
+#    That mirror carries no package index, so a dist the lock forgot cannot be
+#    silently pulled off CPAN — the build fails and the lock gets regenerated
+#    (`spike-build.sh cpan-lock`) rather than quietly floating.
+#  - LIVE (BIBER_CPAN_LOCK=0): let cpanm resolve CPAN_MODULES against live
+#    CPAN. Kept as the escape hatch for regenerating the lock and for
+#    debugging a dependency change.
 #
-# Either way cpanminus itself is sha256-pinned — no more piping a live URL
+# cpanminus itself is sha256-pinned either way — no more piping a live URL
 # into perl.
 stage_purelib() {
   local native="$BUILD/native"
@@ -222,7 +221,7 @@ stage_purelib() {
   fetch_cpanm
   # --pp: dual-life dists must build PURE (native XS .pm files land in the
   # host arch dir the wasm perl never searches).
-  if [ "${BIBER_CPAN_LOCK:-0}" = "1" ]; then
+  if [ "${BIBER_CPAN_LOCK:-1}" = "1" ]; then
     [ -f "$CPAN_LOCK" ] || { echo "missing $CPAN_LOCK — run stage cpan-lock" >&2; exit 1; }
     fetch_cpan_mirror
     local tarballs=() sha path
@@ -236,7 +235,7 @@ stage_purelib() {
     echo "==> [purelib] ${#tarballs[@]} locked dists (sha256-verified)"
   else
     "$nperl" "$CPANM" -L "$purelib" --notest --pp "${CPAN_MODULES[@]}" 2>&1 | tail -3
-    echo "==> [purelib] ${#CPAN_MODULES[@]} modules resolved against live CPAN (set BIBER_CPAN_LOCK=1 to install the pinned closure)"
+    echo "==> [purelib] ${#CPAN_MODULES[@]} modules resolved against LIVE CPAN — unpinned (BIBER_CPAN_LOCK=0)"
   fi
   merge_archdir_pms
   echo "==> [purelib] $(find "$purelib/lib/perl5" -name '*.pm' | wc -l) modules staged"

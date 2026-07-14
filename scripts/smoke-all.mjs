@@ -20,6 +20,13 @@ const runningMajor = Number(process.versions.node.split('.')[0]);
 const NODE_FOR_WASI =
   runningMajor >= 22 ? process.execPath : existsSync(NODE_22_FALLBACK) ? NODE_22_FALLBACK : null;
 
+// WASI is experimental and is not part of any release (the release matrix is
+// emscripten-only), so there is usually no wasi engine to smoke. Skip on the
+// ARTIFACT, not on the Node version: keying the skip on "Node < 22" meant the
+// leg passed only by accident of CI's Node pin, and would have turned every
+// release red the day CI moved to Node 22+.
+const WASI_ENGINE = join(HERE, '..', 'engine', 'build', 'pdflatex', 'wasi', 'pdflatex.wasm');
+
 const SMOKES = [
   ['pdflatex',  'smoke-pdflatex.mjs', false],
   ['xelatex',   'smoke-xelatex.mjs', false],
@@ -34,6 +41,10 @@ const SMOKES = [
 
 const results = [];
 for (const [name, script, needsNode22] of SMOKES) {
+  if (needsNode22 && !existsSync(WASI_ENGINE)) {
+    console.log(`[SKIP] ${name.padEnd(10)} (no wasi engine built; it ships in no release)`);
+    continue;
+  }
   if (needsNode22 && !NODE_FOR_WASI) {
     console.log(`[SKIP] ${name.padEnd(10)} (needs Node 22+ for wasm EH; current is ${process.versions.node})`);
     continue;

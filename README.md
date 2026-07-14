@@ -100,7 +100,7 @@ carry, and the release workflow rejects a tag that does not match
 `package.json`.
 
 Downstream apps (the Typeward app included) should pin an exact version —
-`"@typeward/texlive-wasm": "0.2.4-alpha"`, no `^`/`~` — so the wrapper and its
+`"@typeward/texlive-wasm": "0.2.5-alpha"`, no `^`/`~` — so the wrapper and its
 assets can never drift apart across installs.
 
 npm dist-tags follow the release channel: stable versions publish as `latest`,

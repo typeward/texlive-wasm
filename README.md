@@ -100,13 +100,18 @@ carry, and the release workflow rejects a tag that does not match
 `package.json`.
 
 Downstream apps (the Typeward app included) should pin an exact version —
-`"texlive-wasm": "0.2.0"`, no `^`/`~` — so the wrapper and its assets can
-never drift apart across installs.
+`"@typeward/texlive-wasm": "0.2.3-alpha"`, no `^`/`~` — so the wrapper and its
+assets can never drift apart across installs.
 
-npm dist-tags follow the release channel: stable versions publish as
-`latest`; `-alpha`/`-beta` prereleases publish under `next`, so
-`npx @typeward/texlive-wasm` and a bare `npm install texlive-wasm` never resolve a
-prerelease by accident. Opt in with `npm install @typeward/texlive-wasm@next`.
+npm dist-tags follow the release channel: stable versions publish as `latest`,
+`-alpha`/`-beta` prereleases under `next`.
+
+**While the package is pre-1.0 there is no stable release yet, so `latest`
+points at the current prerelease** — npm requires a `latest` tag and sets it on
+the first publish, so a bare `npm install @typeward/texlive-wasm` resolves the
+alpha today. The moment a stable version ships it takes over `latest` and
+prereleases are reachable only via `@next`. Pin exactly and you are unaffected
+either way.
 
 ## Asset integrity
 

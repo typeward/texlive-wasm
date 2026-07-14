@@ -64,18 +64,16 @@ all: $(foreach e,$(ENGINES_V1),$(foreach t,$(TARGETS),$(e)-$(t)))
 .PHONY: $(ENGINES_V1)
 $(ENGINES_V1): %: $(addprefix %-,$(TARGETS))
 
+# The patches below are re-applied on EVERY build, not gated behind .unpacked.
+# They edit tracked files inside the submodule, while the marker is untracked:
+# any `git -C vendor/texlive-source reset --hard` (or a re-checkout) silently
+# reverts the patches and leaves the marker claiming the source is ready. The
+# ICU engines then die deep inside their build with "configure could not detect
+# your platform". Both patches are idempotent and cost milliseconds — just run
+# them.
 .PHONY: source
 source: $(SOURCE_DIR)/texlive-source/.unpacked
-
-$(SOURCE_DIR)/texlive-source/.unpacked:
-	@echo "==> Setting up TL source"
-	@mkdir -p $(SOURCE_DIR)
-	@if [ ! -d $(ROOT)/../vendor/texlive-source/.git ] && [ ! -f $(ROOT)/../vendor/texlive-source/.git ]; then \
-	  cd $(ROOT)/.. && git submodule update --init --recursive vendor/texlive-source; \
-	fi
-	@ln -sfn $(ROOT)/../vendor/texlive-source $(SOURCE_DIR)/texlive-source
-	@echo "==> Patching TL source (idempotent)"
-	@$(ROOT)/scripts/patch-icu-makefile.sh $(ROOT)/../vendor/texlive-source/libs/icu/Makefile.in
+	@$(ROOT)/scripts/patch-icu-makefile.sh $(ROOT)/../vendor/texlive-source/libs/icu/Makefile.in >/dev/null
 	@# ICU has no mh-wasm32-emscripten; the fallback `mh-unknown` is a stub
 	@# that prints "could not detect platform". Emscripten is Linux-like, so
 	@# copy mh-linux over mh-unknown.
@@ -85,6 +83,14 @@ $(SOURCE_DIR)/texlive-source/.unpacked:
 	  echo "# wasm32-emscripten-patched" >> $(ROOT)/../vendor/texlive-source/libs/icu/icu-src/source/config/mh-unknown; \
 	  echo "==> Patched mh-unknown with mh-linux content"; \
 	fi
+
+$(SOURCE_DIR)/texlive-source/.unpacked:
+	@echo "==> Setting up TL source"
+	@mkdir -p $(SOURCE_DIR)
+	@if [ ! -d $(ROOT)/../vendor/texlive-source/.git ] && [ ! -f $(ROOT)/../vendor/texlive-source/.git ]; then \
+	  cd $(ROOT)/.. && git submodule update --init --recursive vendor/texlive-source; \
+	fi
+	@ln -sfn $(ROOT)/../vendor/texlive-source $(SOURCE_DIR)/texlive-source
 	@touch $@
 
 .PHONY: clean

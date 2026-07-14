@@ -366,12 +366,22 @@ $$(BUILD_DIR)/$(1)/emscripten/$(1).wasm: $$(NATIVE_DONE) $$(if $$(TL_NEEDS_ICU_$
 	  sed -i "s|^$$$${dep}_DEPEND = .*|$$$${dep}_DEPEND =|" \
 	    $$(BUILD_DIR)/$(1)/emscripten/Work/texk/web2c/Makefile 2>/dev/null || true; \
 	done; \
-	if [ -n "$$(TL_NEEDS_ICU_$(1))" ] && [ -d $$(BUILD_DIR)/$(1)/emscripten/Work/libs/icu ]; then \
+	if [ -n "$$(TL_NEEDS_ICU_$(1))" ]; then \
 	  echo "==> [emscripten] $(1) — symlinking pre-built native ICU"; \
+	  mkdir -p $$(BUILD_DIR)/$(1)/emscripten/Work/libs/icu; \
 	  rm -rf $$(BUILD_DIR)/$(1)/emscripten/Work/libs/icu/icu-native; \
 	  ln -snf $$(ICU_NATIVE_DIR) \
 	    $$(BUILD_DIR)/$(1)/emscripten/Work/libs/icu/icu-native; \
 	fi; \
+	: "TL configures its subdirectories during make, not during configure, so" \
+	  "Work/libs/icu does not exist yet on a clean tree — mkdir it above rather" \
+	  "than testing for it. The symlink must be in place BEFORE the make below:" \
+	  "TL's libs/icu Makefile has an 'icu-native/Makefile:' rule that configures" \
+	  "and builds a HOST icu with the cross compiler, which dies with" \
+	  "'cannot run C compiled programs' (autoconf error 77). Pointing icu-native" \
+	  "at the real native build (it already has a Makefile) satisfies that rule" \
+	  "and skips it. Guarding this on the directory's existence meant the ICU" \
+	  "engines only built on a SECOND make, i.e. never in clean-room CI."; \
 	if [ -f $$(BUILD_DIR)/$(1)/emscripten/Work/libs/icu/Makefile ]; then \
 	  echo "==> [emscripten] $(1) — patching libs/icu Makefile (force native gcc + --without-assembly)"; \
 	  $$(ROOT)/scripts/patch-icu-makefile.sh \

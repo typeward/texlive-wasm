@@ -3,6 +3,14 @@
   "version": "0.2.4-alpha",
   "description": "TeX Live in WebAssembly — pdflatex, xelatex, lualatex in the browser and on the edge. Offline-first, Tauri-friendly.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/typeward/texlive-wasm.git"
+  },
+  "homepage": "https://github.com/typeward/texlive-wasm#readme",
+  "bugs": {
+    "url": "https://github.com/typeward/texlive-wasm/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=20"

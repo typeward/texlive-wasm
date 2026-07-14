@@ -187,11 +187,14 @@ jobs:
       # have one). Both names are the contract the library's bundleUrl and the
       # Tauri example's HEAD probe rely on. The formats ride inside the bundles
       # (web2c/*/*.fmt) — no separate format asset to keep in sync.
+      # --no-brotli: the release publishes the gzip only (WebKit has no
+      # DecompressionStream('br')), and brotli-11 on this tree costs minutes per
+      # bundle — four of them here.
       - name: pack TDS bundles
         run: |
-          node scripts/pack-tds.mjs
+          node scripts/pack-tds.mjs --no-brotli
           for engine in pdflatex xelatex lualatex; do
-            node scripts/pack-tds.mjs --tier core --engine "$engine"
+            node scripts/pack-tds.mjs --tier core --engine "$engine" --no-brotli
           done
           ls -la engine-artifacts/*.tar.gz
 

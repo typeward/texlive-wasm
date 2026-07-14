@@ -339,14 +339,17 @@ jobs:
 
       - name: publish to npm
         # Dist-tag policy: stable versions publish as `latest`; prereleases
-        # (-alpha/-beta/…) publish under `next` so `npx texlive-wasm` and a
-        # bare `npm install texlive-wasm` never resolve a prerelease by
-        # accident.
+        # (-alpha/-beta/…) publish under `next`, so `npx @typeward/texlive-wasm`
+        # and a bare `npm install @typeward/texlive-wasm` never resolve a
+        # prerelease by accident. npm also REFUSES to publish a prerelease
+        # without an explicit --tag, so this is a hard requirement, not just
+        # our policy.
         run: |
+          pkg_name=$(node -p "require('./package.json').name")
           pkg_version=$(node -p "require('./package.json').version")
           case "$pkg_version" in
             *-*) dist_tag=next ;;
             *)   dist_tag=latest ;;
           esac
-          echo "publishing texlive-wasm@$pkg_version (dist-tag: $dist_tag)"
+          echo "publishing $pkg_name@$pkg_version (dist-tag: $dist_tag)"
           npm publish --access public --tag "$dist_tag"

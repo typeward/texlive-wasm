@@ -30,6 +30,10 @@ on:
       tag:
         description: 'Existing tag to publish (e.g. v0.1.0)'
         required: true
+      publish_only:
+        description: 'Skip the build and republish an existing release to npm (the engines are release assets, not package contents, so a failed npm step never needs the ~1h engine matrix). The publish must stay in THIS workflow: npm binds the trusted publisher to a workflow file, so a separate one gets an OIDC claim it does not trust.'
+        type: boolean
+        default: false
 
 # The tag being released: the pushed tag, or the dispatch input (on
 # workflow_dispatch GITHUB_REF_NAME is the *branch*, so it must not be used
@@ -43,6 +47,7 @@ permissions:
 
 jobs:
   build:
+    if: ${{ !inputs.publish_only }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -130,6 +135,7 @@ jobs:
   # compiled against.
   smoke:
     needs: build
+    if: ${{ !inputs.publish_only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -211,6 +217,7 @@ jobs:
 
   pack-and-release:
     needs: [build, smoke]
+    if: ${{ !inputs.publish_only }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -302,7 +309,16 @@ jobs:
     needs: pack-and-release
     # Forks that enable Actions would reach the OIDC exchange and fail
     # noisily; the trusted publisher is scoped to this repo only.
-    if: github.repository == 'typeward/texlive-wasm'
+    #
+    # always() is required, not decorative: with publish_only the whole build
+    # is skipped, and GitHub skips a job whose `needs` were skipped unless the
+    # condition is evaluated regardless. Success of the pipeline OR a
+    # deliberate republish are the only two ways in.
+    if: >-
+      always() &&
+      github.repository == 'typeward/texlive-wasm' &&
+      (needs.pack-and-release.result == 'success' ||
+       (inputs.publish_only && needs.pack-and-release.result == 'skipped'))
     runs-on: ubuntu-latest
     permissions:
       id-token: write

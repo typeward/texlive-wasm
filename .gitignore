@@ -72,3 +72,13 @@ example/*/public/core/
 
 reviews/
 plans/
+
+# Agent tooling. `.claude/*` rather than `.claude/` so shared subagents in
+# .claude/agents/ stay committable: git never descends into an excluded
+# directory, so a negation inside one does nothing.
+.claude/*
+!.claude/agents/
+.serena/
+
+# Personal per-project instructions, never repo content.
+CLAUDE.local.md
